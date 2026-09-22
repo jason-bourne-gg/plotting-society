@@ -92,7 +92,7 @@ export default function PlotMap({
         </button>
       </div>
 
-      <div ref={scroller} className="max-h-[68vh] overflow-auto p-4">
+      <div ref={scroller} className="max-h-[68vh] overflow-auto p-4 pt-16">
         <svg
           viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
           style={{ width: `${zoom * 100}%`, minWidth: sector === null ? 900 : 560 }}
@@ -127,6 +127,10 @@ export default function PlotMap({
             return (
               <g
                 key={p.id}
+                // A stable hook for the smoke test. Counting <polygon> broke
+                // the moment these became rounded <rect>s, and the assertion
+                // that matters is "are the plots drawn", not what shape.
+                data-plot={p.plotNo}
                 opacity={dim ? 0.12 : 1}
                 className={canPick ? 'cursor-pointer' : ''}
                 onMouseEnter={() => setHover(p)}

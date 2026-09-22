@@ -28,22 +28,32 @@ import (
 )
 
 // sector mirrors the brochure's four sanctioned sectors.
+//
+// originY is NOT stored here. It used to be, and the numbers were wrong: a
+// sector's height depends on how many rows its plot count needs at its column
+// width, so hardcoded origins had Sector 01's fourteen rows running 260px
+// straight through Sector 02's first row. The whole-layout view is laid out
+// sequentially below instead, from the row counts themselves.
 type sector struct {
-	number  int
-	name    string
-	first   int
-	last    int
-	cols    int
-	colour  string
-	originY int
+	number int
+	name   string
+	first  int
+	last   int
+	cols   int
+	colour string
 }
 
 var sectors = []sector{
-	{1, "Sector 01", 1, 302, 22, "#E8913A", 60},
-	{2, "Sector 02", 303, 364, 16, "#4FA3DC", 780},
-	{3, "Sector 03", 365, 517, 18, "#57A55B", 1060},
-	{4, "Sector 04", 518, 823, 22, "#8B7EC8", 1640},
+	{1, "Sector 01", 1, 302, 22, "#E8913A"},
+	{2, "Sector 02", 303, 364, 16, "#4FA3DC"},
+	{3, "Sector 03", 365, 517, 18, "#57A55B"},
+	{4, "Sector 04", 518, 823, 22, "#8B7EC8"},
 }
+
+func (s sector) count() int { return s.last - s.first + 1 }
+
+// rows is how many rows this sector needs at its column width.
+func (s sector) rows() int { return (s.count() + s.cols - 1) / s.cols }
 
 // The site office quotes maintenance against a reference plot: 1,540 sq ft
 // costs Rs 17,000 one time. Everything else is unitary from that — Rs 11.04 per
@@ -235,6 +245,15 @@ func seed(ctx context.Context, db *database.DB, password string) error {
 	}
 
 	const cellW, cellH, gap = 84, 64, 6
+	// Room above each band for its caption in the whole-layout view.
+	const captionGap = 80
+
+	originY := make(map[int]int, len(sectors))
+	y := 60
+	for _, sec := range sectors {
+		originY[sec.number] = y
+		y += sec.rows()*(cellH+gap) + captionGap
+	}
 
 	soldPlots := make([]uuid.UUID, 0, 512)
 	plotIDByNo := map[int]uuid.UUID{}
@@ -272,7 +291,7 @@ func seed(ctx context.Context, db *database.DB, password string) error {
 			row := idx / sec.cols
 
 			x := 60 + col*(cellW+gap)
-			y := sec.originY + row*(cellH+gap)
+			y := originY[sec.number] + row*(cellH+gap)
 			shape := fmt.Sprintf(
 				`{"points":[[%d,%d],[%d,%d],[%d,%d],[%d,%d]],"sector":%d,"colour":"%s"}`,
 				x, y, x+cellW, y, x+cellW, y+cellH, x, y+cellH, sec.number, sec.colour)

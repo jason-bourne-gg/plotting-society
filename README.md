@@ -129,6 +129,10 @@ test/               schema smoke tests
 web/                React app — owner views and the builder portal
 ```
 
+**Adding a feature?** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) has the
+module pattern, the rules that are not negotiable, and an honest list of the
+limits that will need work as this grows.
+
 ---
 
 ## Three decisions worth knowing about

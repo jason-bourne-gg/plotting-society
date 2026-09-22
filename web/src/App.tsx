@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './lib/auth'
 import Shell from './components/Shell'
+import { SocietyProvider } from './lib/useSociety'
 import { Spinner } from './components/ui'
 
 import Explore from './pages/Explore'
@@ -42,7 +43,11 @@ function RequireAuth({ children }: { children: JSX.Element }) {
     )
   }
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
-  return <Shell>{children}</Shell>
+  return (
+    <SocietyProvider>
+      <Shell>{children}</Shell>
+    </SocietyProvider>
+  )
 }
 
 function RequireStaff({ children }: { children: JSX.Element }) {
@@ -59,7 +64,11 @@ function RequireStaff({ children }: { children: JSX.Element }) {
   // An owner who reaches an admin URL is sent to their own view, not shown a
   // permission error for a page that was never theirs.
   if (!isStaff) return <Navigate to="/" replace />
-  return <Shell>{children}</Shell>
+  return (
+    <SocietyProvider>
+      <Shell>{children}</Shell>
+    </SocietyProvider>
+  )
 }
 
 export default function App() {
@@ -94,9 +103,11 @@ export default function App() {
               <Spinner />
             </div>
           ) : user ? (
-            <Shell>
-              <MapPage />
-            </Shell>
+            <SocietyProvider>
+              <Shell>
+                <MapPage />
+              </Shell>
+            </SocietyProvider>
           ) : (
             // An anonymous visitor lands on the public project page, not a
             // login wall. Selling starts before signing in.

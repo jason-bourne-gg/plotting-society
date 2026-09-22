@@ -1,0 +1,92 @@
+# Runs on every push and pull request.
+#
+# The Go suite needs a real Postgres because the store and handler layers are
+# mostly SQL, and a mock will happily agree that a query filters by builder_id
+# when it does not. A service container gives the same Postgres 16 the app runs
+# against, and the suite creates its own database per package.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  api:
+    name: Go
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: plot
+          POSTGRES_PASSWORD: plot
+          POSTGRES_DB: plotting
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U plot -d plotting"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgres://plot:plot@localhost:5432/plotting?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with coverage
+        run: go test ./internal/... -race -coverprofile=coverage.out
+
+      # A floor, not a target. It exists so a change that quietly drops a whole
+      # module's tests fails here rather than in production.
+      - name: Coverage floor
+        run: |
+          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print substr($3, 1, length($3)-1)}')
+          echo "total coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { if (t < 85) { print "below the 85% floor"; exit 1 } }'
+
+      - name: Schema smoke tests
+        run: |
+          docker run --rm --network host -e PGPASSWORD=plot postgres:16-alpine \
+            psql -h localhost -U plot -d plotting -v ON_ERROR_STOP=1 -f - < test/schema_smoke.sql
+
+  web:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc -b --noEmit
+      - name: Build
+        run: npm run build
+
+  image:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The image is what Render deploys, so a Dockerfile that no longer builds
+      # should fail here and not on the next push to main.
+      - run: docker build -t plotting-society:ci .

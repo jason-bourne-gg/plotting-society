@@ -45,9 +45,10 @@ const ROUTES = {
     }],
   ],
   owner: [
-    // The map's whole job is the polygons. The chrome renders with or without
-    // them, so counting them is the only check that means anything.
-    ['/', () => document.querySelectorAll('svg polygon').length > 100],
+    // The map's whole job is drawing the plots. The chrome renders with or
+    // without them, so counting them is the only check that means anything —
+    // via data-plot rather than a tag name, which a restyle would break.
+    ['/', () => document.querySelectorAll('svg [data-plot]').length > 100],
     ['/my-plot', () => txt().includes('one-time maintenance') && /sq ft ×/.test(txt())],
     ['/updates', () => txt().includes('site progress')],
     ['/fund', () => txt().includes('closing balance') && txt().includes('ledger')],

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { useAuth } from '../lib/auth'
+import { useSociety } from '../lib/useSociety'
 
 type NavItem = { to: string; label: string; icon: string; end?: boolean }
 
@@ -53,6 +54,7 @@ function Mark() {
 
 export default function Shell({ children }: { children: ReactNode }) {
   const { user, signOut, isStaff } = useAuth()
+  const { society, societies, select } = useSociety()
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -71,10 +73,10 @@ export default function Shell({ children }: { children: ReactNode }) {
             <Mark />
             <span className="leading-tight">
               <span className="block font-display text-base font-semibold text-olive-950">
-                Sandesh Nagari 7
+                {society?.name ?? 'Loading…'}
               </span>
               <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-gold-600">
-                Shiv Rudra Group
+                {society?.builderName ?? 'Shiv Rudra Group'}
               </span>
             </span>
           </button>
@@ -102,6 +104,21 @@ export default function Shell({ children }: { children: ReactNode }) {
           </nav>
 
           <div className="ml-auto flex items-center gap-2 lg:ml-2">
+            {/* Only worth showing when there is actually a choice to make. */}
+            {societies.length > 1 && (
+              <select
+                className="field hidden max-w-[190px] py-1.5 text-sm sm:block"
+                value={society?.id ?? ''}
+                onChange={e => select(e.target.value)}
+                aria-label="Switch project"
+              >
+                {societies.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            )}
             {isStaff && !inAdmin && (
               <button className="btn-gold hidden sm:inline-flex" onClick={() => navigate('/admin')}>
                 Admin portal
@@ -159,11 +176,19 @@ export default function Shell({ children }: { children: ReactNode }) {
       <main className="mx-auto max-w-7xl animate-fade-up px-4 py-6 sm:px-6 sm:py-8">{children}</main>
 
       <footer className="mx-auto max-w-7xl px-4 pb-10 pt-4 text-center text-xs text-olive-500 sm:px-6">
-        <p>
-          Sandesh Nagari 7 · RERA <span className="font-mono">PP1190002601297</span> · NMRDA
-          sanctioned · 58 acres · 823 plots
-        </p>
-        <p className="mt-1">Rui &amp; Banwadi, Wardha Road – MIHAN Corridor, Nagpur</p>
+        {society && (
+          <>
+            <p>
+              {society.name}
+              {society.reraNumber && (
+                <>
+                  {' '}· RERA <span className="font-mono">{society.reraNumber}</span>
+                </>
+              )}
+            </p>
+            {society.address && <p className="mt-1">{society.address}</p>}
+          </>
+        )}
       </footer>
     </div>
   )
