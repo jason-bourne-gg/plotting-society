@@ -130,6 +130,11 @@ export const api = {
     request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
   patch: <T,>(path: string, body: unknown) =>
     request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
+  put: <T,>(path: string, body: unknown) =>
+    request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
+  /** Escape hatch for any other verb. */
+  request: <T,>(path: string, method: string, body?: unknown) =>
+    request<T>(path, { method, body: body ? JSON.stringify(body) : undefined }),
 }
 
 // ------------------------------------------------------------------- types
@@ -192,6 +197,9 @@ export type Due = {
   dueDate?: string
   paidOn?: string
   receiptUrl?: string
+  /** Snapshotted when the bill was raised, so the owner sees the working. */
+  ratePerSqft?: number
+  areaSqft?: number
 }
 
 export type PlotDetail = Plot & {

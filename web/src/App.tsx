@@ -19,6 +19,7 @@ import Leads from './pages/admin/Leads'
 import Plots from './pages/admin/Plots'
 import PostUpdate from './pages/admin/PostUpdate'
 import FundAdmin from './pages/admin/FundAdmin'
+import Maintenance from './pages/admin/Maintenance'
 
 /**
  * Three levels of access:
@@ -118,6 +119,7 @@ export default function App() {
       <Route path="/admin/plots" element={<RequireStaff><Plots /></RequireStaff>} />
       <Route path="/admin/updates" element={<RequireStaff><PostUpdate /></RequireStaff>} />
       <Route path="/admin/fund" element={<RequireStaff><FundAdmin /></RequireStaff>} />
+      <Route path="/admin/maintenance" element={<RequireStaff><Maintenance /></RequireStaff>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

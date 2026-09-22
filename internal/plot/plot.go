@@ -55,6 +55,11 @@ type Due struct {
 	DueDate     *string   `json:"dueDate,omitempty"`
 	PaidOn      *string   `json:"paidOn,omitempty"`
 	ReceiptURL  string    `json:"receiptUrl,omitempty"`
+	// Snapshotted when the bill was raised, so the owner can be shown the
+	// working — "1,291.68 sq ft x Rs 5.00" — rather than a bare total they
+	// have to take on trust.
+	RatePerSqft *float64 `json:"ratePerSqft,omitempty"`
+	AreaSqft    *float64 `json:"areaSqft,omitempty"`
 }
 
 type Doc struct {
@@ -148,7 +153,7 @@ func (s *Store) DuesForPlot(ctx context.Context, plotID uuid.UUID) ([]Due, error
 	rows, err := s.db.Query(ctx, `
 		SELECT id, period_label, amount_due, amount_paid,
 		       to_char(due_date,'YYYY-MM-DD'), to_char(paid_on,'YYYY-MM-DD'),
-		       COALESCE(receipt_url,'')
+		       COALESCE(receipt_url,''), rate_per_sqft, area_sqft
 		  FROM maintenance_dues WHERE plot_id = $1 ORDER BY due_date DESC NULLS LAST`, plotID)
 	if err != nil {
 		return nil, err
@@ -159,7 +164,7 @@ func (s *Store) DuesForPlot(ctx context.Context, plotID uuid.UUID) ([]Due, error
 	for rows.Next() {
 		var d Due
 		if err := rows.Scan(&d.ID, &d.PeriodLabel, &d.AmountDue, &d.AmountPaid,
-			&d.DueDate, &d.PaidOn, &d.ReceiptURL); err != nil {
+			&d.DueDate, &d.PaidOn, &d.ReceiptURL, &d.RatePerSqft, &d.AreaSqft); err != nil {
 			return nil, err
 		}
 		dues = append(dues, d)

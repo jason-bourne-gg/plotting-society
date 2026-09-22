@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"os"
 	"time"
@@ -41,6 +42,27 @@ var sectors = []sector{
 	{2, "Sector 02", 303, 364, 16, "#4FA3DC", 780},
 	{3, "Sector 03", 365, 517, 18, "#57A55B", 1060},
 	{4, "Sector 04", 518, 823, 22, "#8B7EC8", 1640},
+}
+
+// The site office quotes maintenance against a reference plot: 1,540 sq ft
+// costs Rs 17,000 one time. Everything else is unitary from that — Rs 11.04 per
+// square foot — so a 1,130 sq ft plot pays Rs 12,475 and a 4,035 sq ft plot
+// pays Rs 44,546.
+//
+// Sector 01 fronts the 15 M spine road and carries more lighting and sweeping,
+// so it sits above the baseline; Sector 04 is still being developed and sits
+// below it. These are the rates the admin can change per sector.
+const (
+	referenceAreaSqft   = 1540.0
+	referenceAmount     = 17000.0
+	baselineRatePerSqft = referenceAmount / referenceAreaSqft // Rs 11.04
+)
+
+var sectorRates = map[string]float64{
+	"Sector 01": 12.50,
+	"Sector 02": 11.04,
+	"Sector 03": 11.04,
+	"Sector 04": 9.75,
 }
 
 // plotAreas are the distinct "remaining plot area" figures that repeat across
@@ -161,6 +183,22 @@ func seed(ctx context.Context, db *database.DB, password string) error {
 		return fmt.Errorf("society: %w", err)
 	}
 
+	// The society-wide fallback, then the per-sector overrides the site office
+	// would have set.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO maintenance_rates (society_id, sector, rate_per_sqft, updated_by)
+		VALUES ($1, NULL, $2, $3)`,
+		societyID, math.Round(baselineRatePerSqft*100)/100, adminID); err != nil {
+		return fmt.Errorf("default rate: %w", err)
+	}
+	for sector, rate := range sectorRates {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO maintenance_rates (society_id, sector, rate_per_sqft, updated_by)
+			VALUES ($1, $2, $3, $4)`, societyID, sector, rate, adminID); err != nil {
+			return fmt.Errorf("rate for %s: %w", sector, err)
+		}
+	}
+
 	// Deterministic, so a demo shown twice looks the same twice.
 	rng := rand.New(rand.NewSource(7))
 
@@ -249,22 +287,83 @@ func seed(ctx context.Context, db *database.DB, password string) error {
 		}
 	}
 
-	// Four quarters of maintenance, the latest one outstanding.
-	for i, period := range []string{"FY2026-Q1", "FY2026-Q2", "FY2026-Q3", "FY2026-Q4"} {
-		paid := 7500.0
-		var paidOn any = time.Now().AddDate(0, -3*(4-i), 4)
-		if i == 3 {
-			paid, paidOn = 0, nil
+	// One-time maintenance, priced per square foot, raised against every plot
+	// that has been sold. The bill snapshots the rate and the area it was
+	// computed from so an owner can be shown the working and a later rate
+	// change cannot rewrite an invoice already issued.
+	//
+	// About four in five have paid, which is what a real collection looks like
+	// and gives the builder's dues view something to chase.
+	var (
+		billed      int
+		billedPaid  int
+		collected   float64
+		outstanding float64
+	)
+	rows, err := tx.Query(ctx, `
+		SELECT id, area_sqft, phase FROM plots
+		 WHERE society_id = $1 AND status = 'sold' AND area_sqft IS NOT NULL
+		 ORDER BY plot_no`, societyID)
+	if err != nil {
+		return fmt.Errorf("read sold plots: %w", err)
+	}
+	type bill struct {
+		plotID uuid.UUID
+		area   float64
+		sector string
+	}
+	var bills []bill
+	for rows.Next() {
+		var b bill
+		if err := rows.Scan(&b.plotID, &b.area, &b.sector); err != nil {
+			rows.Close()
+			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO maintenance_dues (plot_id, period_label, amount_due, amount_paid, due_date, paid_on)
-			VALUES ($1,$2,7500,$3,$4,$5)`,
-			primaryPlotID, period, paid, time.Now().AddDate(0, -3*(4-i), 15), paidOn); err != nil {
-			return fmt.Errorf("dues: %w", err)
-		}
+		bills = append(bills, b)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
 	}
 
-	// Ledger heads follow the amenities actually promised in the brochure.
+	for i, b := range bills {
+		rate, ok := sectorRates[b.sector]
+		if !ok {
+			rate = math.Round(baselineRatePerSqft*100) / 100
+		}
+		amount := math.Round(b.area*rate*100) / 100
+
+		// Deterministic 80/20 split rather than a random one, so the totals in
+		// the ledger below always match what is actually on the plots.
+		paidInFull := i%5 != 0
+		amountPaid := 0.0
+		var paidOn any
+		if paidInFull {
+			amountPaid = amount
+			paidOn = time.Now().AddDate(0, 0, -(30 + rng.Intn(300)))
+			collected += amount
+			billedPaid++
+		} else {
+			outstanding += amount
+		}
+
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO maintenance_dues (plot_id, period_label, amount_due, amount_paid,
+			                              due_date, paid_on, rate_per_sqft, area_sqft, sector)
+			VALUES ($1, 'One-time maintenance', $2, $3, $4, $5, $6, $7, $8)`,
+			b.plotID, amount, amountPaid,
+			time.Now().AddDate(0, 0, -400), paidOn,
+			rate, b.area, b.sector); err != nil {
+			return fmt.Errorf("dues for plot %s: %w", b.plotID, err)
+		}
+		billed++
+	}
+
+	// The society fund is maintenance money collected from owners — security,
+	// water, lighting, upkeep. It deliberately does NOT carry the developer's
+	// capital works (roads, the STP, the club house): those are funded from
+	// plot sales and would leave the owners' fund tens of lakhs in deficit,
+	// which is both wrong and an alarming thing to put in front of a builder.
 	ledger := []struct {
 		days   int
 		head   string
@@ -272,20 +371,29 @@ func seed(ctx context.Context, db *database.DB, password string) error {
 		credit float64
 		debit  float64
 	}{
-		{150, "collections", "Q1 maintenance collected — 418 plots", 3135000, 0},
-		{142, "security", "Security agency, 6 guards — Jan to Mar", 0, 792000},
-		{128, "roads", "Cement road, Sector 01 internal 9.0 M roads", 0, 2840000},
-		{116, "drainage", "Drainage line, Sector 01 and Sector 02", 0, 1960000},
-		{104, "electrification", "Street light poles — 74 units with fittings", 0, 1184000},
-		{92, "collections", "Q2 maintenance collected — 441 plots", 3307500, 0},
-		{84, "stp", "STP commissioning, Sector 03", 0, 2250000},
-		{70, "water", "Borewell and overhead tank, Sector 02", 0, 680000},
-		{58, "security", "Security agency, 6 guards — Apr to Jun", 0, 792000},
-		{44, "landscaping", "Open Space-7 development — lawn and plantation", 0, 1420000},
-		{30, "amenities", "Club house foundation and plinth", 0, 3600000},
-		{18, "collections", "Q3 maintenance collected — 462 plots", 3465000, 0},
-		{8, "security", "Security agency, 6 guards — Jul to Sep", 0, 792000},
+		{150, "security", "Security agency, 6 guards — Jan to Mar", 0, 792000},
+		{131, "lighting", "Street light energy charges and fittings — Q1", 0, 214000},
+		{118, "water", "Water tanker supply and borewell power — Q1", 0, 186000},
+		{104, "landscaping", "Open Space-7 lawn upkeep and plantation", 0, 262000},
+		{84, "security", "Security agency, 6 guards — Apr to Jun", 0, 792000},
+		{73, "water", "Borewell servicing and pump repair, Sector 02", 0, 340000},
+		{61, "lighting", "Street light energy charges — Q2", 0, 228000},
+		{50, "housekeeping", "Road sweeping and garbage clearance — Q2", 0, 174000},
+		{38, "admin", "Accounting, RERA filing and society printing", 0, 96000},
+		{12, "security", "Security agency, 6 guards — Jul to Sep", 0, 792000},
+		{6, "landscaping", "Monsoon replanting along the 18.0 M D.P. road", 0, 148000},
 	}
+	// One credit for what the one-time maintenance actually brought in, so the
+	// ledger reconciles against the dues rather than being a separate fiction.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO fund_entries (society_id, entry_date, head, description, credit, debit, created_by)
+		VALUES ($1, CURRENT_DATE - 160, 'collections', $2, $3, 0, $4)`,
+		societyID,
+		fmt.Sprintf("One-time maintenance collected — %d of %d plots", billedPaid, billed),
+		collected, adminID); err != nil {
+		return fmt.Errorf("collections entry: %w", err)
+	}
+
 	for _, e := range ledger {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO fund_entries (society_id, entry_date, head, description, credit, debit, created_by)
@@ -422,7 +530,8 @@ func seed(ctx context.Context, db *database.DB, password string) error {
 Seeded Sandesh Nagari 7 — Shiv Rudra Group, Nagpur.
 
   823 plots across 4 sectors (1-302, 303-364, 365-517, 518-823)
-  13 ledger entries, 6 progress posts, 4 owner queries (one past SLA), 4 guest leads
+  %d one-time maintenance bills (Rs %.2f/sq ft baseline, per-sector) — Rs %.0f collected, Rs %.0f outstanding
+  11 ledger entries, 6 progress posts, 4 owner queries (one past SLA), 4 guest leads
 
   Builder admin : office@shivrudragroup.in
   Site staff    : sitedesk@shivrudragroup.in
@@ -435,6 +544,6 @@ Seeded Sandesh Nagari 7 — Shiv Rudra Group, Nagpur.
 
 Ownership, dues, ledger amounts and queries are invented demo data.
 Plot numbers, sector ranges, areas and the RERA number are from the brochure.
-`, password, societyID)
+`, billed, math.Round(baselineRatePerSqft*100)/100, collected, outstanding, password, societyID)
 	return nil
 }

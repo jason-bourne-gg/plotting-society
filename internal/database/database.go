@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -31,11 +33,41 @@ func Connect(ctx context.Context, url string) (*DB, error) {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
 
-	// Sized for a serverless Postgres free tier (Neon caps connections hard).
+	// Sized for a serverless Postgres free tier, which caps connections hard.
 	cfg.MaxConns = 8
 	cfg.MinConns = 0
 	cfg.MaxConnIdleTime = 2 * time.Minute
 	cfg.MaxConnLifetime = 30 * time.Minute
+
+	// Never cache prepared statements.
+	//
+	// Production runs through a connection pooler in transaction mode — that is
+	// the whole point of the pooler on a free tier, and both Supabase and Neon
+	// hand you that URL by default. In transaction mode a client does not keep
+	// the same backend between statements, so a cached prepared statement
+	// resolves against a backend that never parsed it, and the pool fails with
+	// "prepared statement ... already exists" (SQLSTATE 42P05) the moment a
+	// connection is reused.
+	//
+	// QueryExecModeDescribeExec keeps the extended protocol but with unnamed
+	// statements: it asks the server to describe the statement, then executes
+	// it, holding nothing across transactions. That is safe behind a pooler and
+	// keeps the server's parameter type inference, which matters here — queries
+	// use `= ANY($1)` over a uuid array and pass booleans straight into a
+	// predicate, and neither survives the client having to guess the types.
+	//
+	// It is not QueryExecModeExec: that skips the describe, and pgx's guesses
+	// are not good enough for those two patterns. It is not CacheDescribe
+	// either, whose cached descriptions go stale the moment a migration
+	// changes a column. The cost here is one extra round trip per query.
+	//
+	// An explicit default_query_exec_mode in the connection string wins, since
+	// ParseConfig has already applied it by this point.
+	if !strings.Contains(url, "default_query_exec_mode") {
+		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+	}
+	cfg.ConnConfig.StatementCacheCapacity = 0
+	cfg.ConnConfig.DescriptionCacheCapacity = 0
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

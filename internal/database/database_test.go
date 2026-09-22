@@ -2,6 +2,8 @@ package database
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5"
 	"os"
 	"strings"
 	"testing"
@@ -107,5 +109,51 @@ func TestMigrateOnAClosedPool(t *testing.T) {
 
 	if err := db.Migrate(ctx); err == nil {
 		t.Fatal("Migrate should fail against a closed pool")
+	}
+}
+
+// Production runs behind a connection pooler in transaction mode, where a
+// cached prepared statement fails with SQLSTATE 42P05 as soon as the pool
+// reuses a connection. This only shows up against a real pooler, so the
+// configuration is asserted here rather than discovered on a deploy.
+func TestConnectDisablesPreparedStatementCaching(t *testing.T) {
+	ctx := context.Background()
+	db, err := Connect(ctx, baseURL())
+	if err != nil {
+		t.Skipf("no Postgres reachable (%v)", err)
+	}
+	defer db.Close()
+
+	cfg := db.Config().ConnConfig
+	if cfg.DefaultQueryExecMode != pgx.QueryExecModeDescribeExec {
+		t.Errorf("DefaultQueryExecMode = %v, want QueryExecModeDescribeExec: pooler-safe, and it keeps the server's parameter type inference",
+			cfg.DefaultQueryExecMode)
+	}
+	if cfg.StatementCacheCapacity != 0 {
+		t.Errorf("StatementCacheCapacity = %d, want 0", cfg.StatementCacheCapacity)
+	}
+	if cfg.DescriptionCacheCapacity != 0 {
+		t.Errorf("DescriptionCacheCapacity = %d, want 0", cfg.DescriptionCacheCapacity)
+	}
+}
+
+// An operator who sets the mode explicitly should keep it.
+func TestConnectHonoursAnExplicitExecMode(t *testing.T) {
+	ctx := context.Background()
+	url := baseURL()
+	if strings.Contains(url, "?") {
+		url += "&default_query_exec_mode=cache_statement"
+	} else {
+		url += "?default_query_exec_mode=cache_statement"
+	}
+
+	db, err := Connect(ctx, url)
+	if err != nil {
+		t.Skipf("no Postgres reachable (%v)", err)
+	}
+	defer db.Close()
+
+	if got := db.Config().ConnConfig.DefaultQueryExecMode; got != pgx.QueryExecModeCacheStatement {
+		t.Errorf("DefaultQueryExecMode = %v, want the explicit cache_statement to win", got)
 	}
 }

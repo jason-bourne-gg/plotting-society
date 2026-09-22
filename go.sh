@@ -19,5 +19,6 @@ exec docker run --rm \
   -v "$root":/src -w /src \
   -v go-mod-cache:/go/pkg/mod -v go-build-cache:/root/.cache/go-build \
   -e TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://plot:plot@postgres:5432/plotting?sslmode=disable}" \
+  -e DATABASE_URL="${DATABASE_URL:-}" \
   "${net_args[@]}" \
   golang:1.23-alpine go "$@"

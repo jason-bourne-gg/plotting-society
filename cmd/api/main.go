@@ -22,6 +22,7 @@ import (
 	"github.com/jason-bourne-gg/plotting-society/internal/fund"
 	"github.com/jason-bourne-gg/plotting-society/internal/httpx"
 	"github.com/jason-bourne-gg/plotting-society/internal/lead"
+	"github.com/jason-bourne-gg/plotting-society/internal/maintenance"
 	"github.com/jason-bourne-gg/plotting-society/internal/media"
 	"github.com/jason-bourne-gg/plotting-society/internal/plot"
 	"github.com/jason-bourne-gg/plotting-society/internal/query"
@@ -92,6 +93,7 @@ func run() error {
 	// Guest surface: public society view plus the enquiry form.
 	lead.NewHandler(lead.NewStore(db), guard).Routes(mux, authenticator)
 	fund.NewHandler(fund.NewStore(db), guard).Routes(mux, authenticator)
+	maintenance.NewHandler(maintenance.NewStore(db), guard).Routes(mux, authenticator)
 	update.NewHandler(update.NewStore(db), guard).Routes(mux, authenticator)
 	media.NewHandler(media.NewSigner(cfg.S3)).Routes(mux, authenticator)
 

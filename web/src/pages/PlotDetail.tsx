@@ -129,6 +129,13 @@ export default function PlotDetailPage({ mine = false }: { mine?: boolean }) {
                 <div key={d.id} className="flex flex-wrap items-center gap-3 p-4">
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold text-olive-950">{d.periodLabel}</p>
+                    {/* Show the working. A bare total invites a query; the
+                        arithmetic answers it before it is raised. */}
+                    {d.ratePerSqft != null && d.areaSqft != null && (
+                      <p className="text-xs font-medium text-olive-600">
+                        {sqft(d.areaSqft)} × ₹{d.ratePerSqft.toFixed(2)}/sq ft
+                      </p>
+                    )}
                     <p className="text-xs text-olive-500">
                       {d.paidOn ? `Paid ${shortDate(d.paidOn)}` : `Due ${shortDate(d.dueDate)}`}
                     </p>

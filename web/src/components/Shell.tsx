@@ -20,6 +20,7 @@ const staffNav: NavItem[] = [
   { to: '/admin/plots', label: 'Plots', icon: '🧾' },
   { to: '/admin/updates', label: 'Post update', icon: '📣' },
   { to: '/admin/fund', label: 'Fund ledger', icon: '📒' },
+  { to: '/admin/maintenance', label: 'Maintenance', icon: '📐' },
   { to: '/', label: 'Owner view', icon: '👁️', end: true },
 ]
 
