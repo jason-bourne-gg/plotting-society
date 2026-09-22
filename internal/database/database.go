@@ -8,6 +8,7 @@ package database
 import (
 	"context"
 	"embed"
+	"io/fs"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -96,6 +97,16 @@ func Connect(ctx context.Context, url string) (*DB, error) {
 
 // Migrate applies every migration not yet recorded, in filename order.
 func (db *DB) Migrate(ctx context.Context) error {
+	return db.migrateFrom(ctx, migrationFS, "migrations")
+}
+
+// migrateFrom is Migrate with the source injected.
+//
+// Migrations run on every boot and a half-applied one would leave the schema in
+// a state nothing else in the app expects, so the rollback path matters more
+// than most error handling here — and it can only be exercised by feeding in a
+// migration that fails on purpose. Production always passes the embedded set.
+func (db *DB) migrateFrom(ctx context.Context, source fs.FS, dir string) error {
 	_, err := db.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version    text PRIMARY KEY,
@@ -123,7 +134,7 @@ func (db *DB) Migrate(ctx context.Context) error {
 		return err
 	}
 
-	entries, err := migrationFS.ReadDir("migrations")
+	entries, err := fs.ReadDir(source, dir)
 	if err != nil {
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
@@ -139,7 +150,7 @@ func (db *DB) Migrate(ctx context.Context) error {
 		if applied[name] {
 			continue
 		}
-		body, err := migrationFS.ReadFile("migrations/" + name)
+		body, err := fs.ReadFile(source, dir+"/"+name)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", name, err)
 		}

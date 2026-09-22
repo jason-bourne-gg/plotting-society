@@ -18,13 +18,30 @@ type Handler struct {
 	store  *Store
 	tokens *TokenIssuer
 	guard  *access.Guard
+	// Login and refresh are unauthenticated and cheap to call. Argon2id makes
+	// each guess cost ~50ms, which raises the price of a brute force but does
+	// not bound it; this does. Keyed on the client AND on the email, so one
+	// noisy network cannot lock out an address, and one address cannot be
+	// ground down from many clients.
+	limiter *httpx.Limiter
 	// inviteBaseURL is where the emailed link points, e.g. https://app/invite
 	inviteBaseURL string
 }
 
 func NewHandler(store *Store, tokens *TokenIssuer, guard *access.Guard, inviteBaseURL string) *Handler {
-	return &Handler{store: store, tokens: tokens, guard: guard, inviteBaseURL: inviteBaseURL}
+	return &Handler{
+		store: store, tokens: tokens, guard: guard,
+		limiter: httpx.NewLimiter(), inviteBaseURL: inviteBaseURL,
+	}
 }
+
+// Attempts allowed per window before a caller is turned away.
+const (
+	loginAttempts   = 10
+	loginWindow     = 15 * time.Minute
+	refreshAttempts = 30
+	refreshWindow   = time.Minute
+)
 
 // Routes registers everything under /api/auth.
 func (h *Handler) Routes(mux *http.ServeMux, a *Authenticator) {
@@ -89,6 +106,16 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) error {
 		return httpx.BadRequest("Email and password are required.")
 	}
 
+	// Both keys must have budget. The client key stops one machine working
+	// through a list of addresses; the email key stops a botnet grinding one
+	// account. The message is deliberately the same either way.
+	client := httpx.ClientFingerprint(r)
+	emailKey := "login:" + strings.ToLower(req.Email)
+	if !h.limiter.Allow(client, loginAttempts, loginWindow) ||
+		!h.limiter.Allow(emailKey, loginAttempts, loginWindow) {
+		return httpx.TooManyRequests("Too many sign-in attempts. Try again in a few minutes.")
+	}
+
 	user, hash, err := h.store.UserByEmail(r.Context(), req.Email)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return httpx.Internal(err)
@@ -106,6 +133,11 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) error {
 	if !user.IsActive {
 		return httpx.Forbidden("This account has been deactivated. Contact the builder's office.")
 	}
+
+	// A correct password clears the budget: someone who has just proved who
+	// they are should not be one typo away from a lockout.
+	h.limiter.Forget(client)
+	h.limiter.Forget(emailKey)
 
 	_ = h.store.TouchLastLogin(r.Context(), user.ID)
 	return h.issueSession(w, r, user, http.StatusOK)
@@ -125,6 +157,11 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) error {
 	}
 	if req.RefreshToken == "" {
 		return httpx.BadRequest("refreshToken is required.")
+	}
+	// Refresh tokens are single use, so a valid client refreshes rarely. A
+	// flood is someone guessing.
+	if !h.limiter.Allow("refresh:"+httpx.ClientFingerprint(r), refreshAttempts, refreshWindow) {
+		return httpx.TooManyRequests("Too many attempts. Try again shortly.")
 	}
 
 	// Single-use: consuming revokes the old token and we hand back a new one.

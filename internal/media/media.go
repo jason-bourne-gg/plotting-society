@@ -48,8 +48,17 @@ func (s *Signer) Configured() bool {
 	return s.cfg.Endpoint != "" && s.cfg.Bucket != "" && s.cfg.AccessKeyID != "" && s.cfg.SecretKey != ""
 }
 
-// PresignPut returns a URL the browser may PUT to for the next 15 minutes.
-func (s *Signer) PresignPut(key string, expires time.Duration) (string, error) {
+// PresignPut returns a URL the browser may PUT to for the next 15 minutes,
+// binding the content type and the exact byte length into the signature.
+//
+// Signing only `host` — which is the obvious thing to do, and what this did
+// first — makes the allowlist decorative: the caller declares "image/jpeg" to
+// get a URL ending .jpg, then PUTs HTML with Content-Type: text/html, and the
+// object store serves it back as HTML from the media origin. Signing the
+// headers means the upload is rejected unless it matches what was approved,
+// and the same applies to the size cap, which was otherwise just a number the
+// client told us about itself.
+func (s *Signer) PresignPut(key, contentType string, size int64, expires time.Duration) (string, error) {
 	endpoint, err := url.Parse(strings.TrimRight(s.cfg.Endpoint, "/"))
 	if err != nil {
 		return "", fmt.Errorf("parse S3_ENDPOINT: %w", err)
@@ -68,14 +77,18 @@ func (s *Signer) PresignPut(key string, expires time.Duration) (string, error) {
 	q.Set("X-Amz-Credential", s.cfg.AccessKeyID+"/"+scope)
 	q.Set("X-Amz-Date", stamp)
 	q.Set("X-Amz-Expires", fmt.Sprintf("%d", int(expires.Seconds())))
-	q.Set("X-Amz-SignedHeaders", "host")
+	// Header names in the canonical request must be lowercase and sorted.
+	q.Set("X-Amz-SignedHeaders", "content-length;content-type;host")
+
+	canonicalHeaders := fmt.Sprintf("content-length:%d\ncontent-type:%s\nhost:%s\n",
+		size, contentType, endpoint.Host)
 
 	canonicalRequest := strings.Join([]string{
 		http.MethodPut,
 		uriEncodePath(endpoint.Path),
 		q.Encode(),
-		"host:" + endpoint.Host + "\n",
-		"host",
+		canonicalHeaders,
+		"content-length;content-type;host",
 		"UNSIGNED-PAYLOAD",
 	}, "\n")
 
@@ -182,7 +195,7 @@ func (h *Handler) presign(w http.ResponseWriter, r *http.Request) error {
 	// The uploader's id is in the key so an orphaned object can be traced back.
 	key := fmt.Sprintf("%s/%s/%s%s", folder, identity.UserID, uuid.NewString(), ext)
 
-	uploadURL, err := h.signer.PresignPut(key, 15*time.Minute)
+	uploadURL, err := h.signer.PresignPut(key, req.ContentType, req.SizeBytes, 15*time.Minute)
 	if err != nil {
 		return httpx.Internal(err)
 	}
@@ -192,5 +205,11 @@ func (h *Handler) presign(w http.ResponseWriter, r *http.Request) error {
 		"publicUrl": h.signer.PublicURL(key),
 		"key":       key,
 		"expiresIn": 900,
+		// The signature covers these, so the PUT must send them verbatim or the
+		// object store rejects it.
+		"requiredHeaders": map[string]string{
+			"Content-Type":   req.ContentType,
+			"Content-Length": fmt.Sprintf("%d", req.SizeBytes),
+		},
 	})
 }

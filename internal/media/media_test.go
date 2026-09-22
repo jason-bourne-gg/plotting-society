@@ -50,7 +50,7 @@ func TestConfigured(t *testing.T) {
 func TestPresignPut(t *testing.T) {
 	signer := NewSigner(testConfig())
 
-	raw, err := signer.PresignPut("updates/abc/def.jpg", 15*time.Minute)
+	raw, err := signer.PresignPut("updates/abc/def.jpg", "image/jpeg", 204800, 15*time.Minute)
 	if err != nil {
 		t.Fatalf("PresignPut: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestPresignPut(t *testing.T) {
 	checks := map[string]string{
 		"X-Amz-Algorithm":     "AWS4-HMAC-SHA256",
 		"X-Amz-Expires":       "900",
-		"X-Amz-SignedHeaders": "host",
+		"X-Amz-SignedHeaders": "content-length;content-type;host",
 	}
 	for k, want := range checks {
 		if got := q.Get(k); got != want {
@@ -98,11 +98,11 @@ func TestPresignPut(t *testing.T) {
 func TestPresignPutSignatureVariesWithKey(t *testing.T) {
 	signer := NewSigner(testConfig())
 
-	a, err := signer.PresignPut("updates/a.jpg", time.Minute)
+	a, err := signer.PresignPut("updates/a.jpg", "image/jpeg", 1000, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := signer.PresignPut("updates/b.jpg", time.Minute)
+	b, err := signer.PresignPut("updates/b.jpg", "image/jpeg", 1000, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestPresignPutSignatureVariesWithKey(t *testing.T) {
 func TestPresignPutBadEndpoint(t *testing.T) {
 	c := testConfig()
 	c.Endpoint = "://not a url"
-	if _, err := NewSigner(c).PresignPut("k", time.Minute); err == nil {
+	if _, err := NewSigner(c).PresignPut("k", "image/jpeg", 10, time.Minute); err == nil {
 		t.Fatal("expected an error for an unparseable endpoint")
 	}
 }
@@ -315,5 +315,50 @@ func TestRoutesRegistersUploadEndpoint(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/uploads", strings.NewReader(`{}`)))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+// Signing only `host` would make the allowlist decorative: a caller could
+// declare image/jpeg to get a .jpg URL, then PUT HTML with
+// Content-Type: text/html and have the store serve it back as HTML.
+func TestPresignBindsContentTypeAndLength(t *testing.T) {
+	signer := NewSigner(testConfig())
+
+	asJPEG, err := signer.PresignPut("updates/a.jpg", "image/jpeg", 1000, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asHTML, err := signer.PresignPut("updates/a.jpg", "text/html", 1000, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bigger, err := signer.PresignPut("updates/a.jpg", "image/jpeg", 2000, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sig := func(u string) string { return mustQuery(t, u).Get("X-Amz-Signature") }
+
+	if sig(asJPEG) == sig(asHTML) {
+		t.Error("the content type is not part of the signature — the allowlist can be bypassed at PUT time")
+	}
+	if sig(asJPEG) == sig(bigger) {
+		t.Error("the length is not part of the signature — the size cap can be exceeded at PUT time")
+	}
+	if got := mustQuery(t, asJPEG).Get("X-Amz-SignedHeaders"); got != "content-length;content-type;host" {
+		t.Errorf("SignedHeaders = %q", got)
+	}
+}
+
+func TestPresignHandlerReturnsTheHeadersItSigned(t *testing.T) {
+	h := NewHandler(NewSigner(testConfig()))
+	rec, err := presignWithAuth(t, h,
+		`{"purpose":"site_update","contentType":"image/png","sizeBytes":4096}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers, _ := decodeBody(t, rec)["requiredHeaders"].(map[string]any)
+	if headers["Content-Type"] != "image/png" || headers["Content-Length"] != "4096" {
+		t.Errorf("requiredHeaders = %v; the client must send exactly what was signed", headers)
 	}
 }

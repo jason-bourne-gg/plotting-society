@@ -30,12 +30,23 @@ export default function PostUpdate() {
     setError('')
     try {
       for (const file of Array.from(files).slice(0, 10)) {
-        const signed = await api.post<{ uploadUrl: string; publicUrl: string }>('/api/uploads', {
+        const signed = await api.post<{
+          uploadUrl: string
+          publicUrl: string
+          requiredHeaders: Record<string, string>
+        }>('/api/uploads', {
           purpose: 'site_update',
           contentType: file.type,
           sizeBytes: file.size,
         })
-        const put = await fetch(signed.uploadUrl, { method: 'PUT', body: file })
+        // The signature covers Content-Type and Content-Length, so these must
+        // go up exactly as approved or the object store rejects the PUT. That
+        // is the point: it stops a caller declaring an image and uploading HTML.
+        const put = await fetch(signed.uploadUrl, {
+          method: 'PUT',
+          headers: signed.requiredHeaders,
+          body: file,
+        })
         if (!put.ok) throw new Error('upload failed')
         setPhotos((prev) => [...prev, { url: signed.publicUrl }])
       }

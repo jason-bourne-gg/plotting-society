@@ -11,13 +11,9 @@ package lead
 import (
 	"encoding/json"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
-	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -202,58 +198,16 @@ func validEnquiryStatus(s string) bool {
 	return false
 }
 
-// ------------------------------------------------------------- rate limiting
-// The enquiry endpoint is the only unauthenticated write in the app, so it gets
-// its own bucket: a handful per client per hour is plenty for a real buyer and
-// useless to a script.
-
-type limiter struct {
-	mu   sync.Mutex
-	hits map[string][]time.Time
-}
-
-func newLimiter() *limiter { return &limiter{hits: map[string][]time.Time{}} }
-
-func (l *limiter) allow(key string, max int, window time.Duration) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	cutoff := time.Now().Add(-window)
-	kept := make([]time.Time, 0, len(l.hits[key]))
-	for _, t := range l.hits[key] {
-		if t.After(cutoff) {
-			kept = append(kept, t)
-		}
-	}
-	if len(kept) >= max {
-		l.hits[key] = kept
-		return false
-	}
-	l.hits[key] = append(kept, time.Now())
-
-	// Opportunistic sweep so the map cannot grow without bound. This is a
-	// single-instance limiter; on several instances each holds its own view,
-	// which is acceptable for spam control and is not a security boundary.
-	if len(l.hits) > 4096 {
-		for k, v := range l.hits {
-			if len(v) == 0 || v[len(v)-1].Before(cutoff) {
-				delete(l.hits, k)
-			}
-		}
-	}
-	return true
-}
-
 // ------------------------------------------------------------------ handler
 
 type Handler struct {
 	store   *Store
 	guard   *access.Guard
-	limiter *limiter
+	limiter *httpx.Limiter
 }
 
 func NewHandler(store *Store, guard *access.Guard) *Handler {
-	return &Handler{store: store, guard: guard, limiter: newLimiter()}
+	return &Handler{store: store, guard: guard, limiter: httpx.NewLimiter()}
 }
 
 func (h *Handler) Routes(mux *http.ServeMux, a *auth.Authenticator) {
@@ -292,13 +246,10 @@ func (h *Handler) publicSocietyBySlug(w http.ResponseWriter, r *http.Request) er
 }
 
 func (h *Handler) createEnquiry(w http.ResponseWriter, r *http.Request) error {
-	client := clientFingerprint(r)
-	if !h.limiter.allow(client, 5, time.Hour) {
-		return &httpx.Error{
-			Status:  http.StatusTooManyRequests,
-			Code:    "rate_limited",
-			Message: "You have sent a few enquiries already. The site office will call you shortly.",
-		}
+	client := httpx.ClientFingerprint(r)
+	if !h.limiter.Allow(client, 5, time.Hour) {
+		return httpx.TooManyRequests(
+			"You have sent a few enquiries already. The site office will call you shortly.")
 	}
 
 	var req struct {
@@ -430,23 +381,4 @@ func plausiblePhone(s string) bool {
 	}, s)
 	digits = strings.TrimPrefix(digits, "91")
 	return len(digits) == 10 && digits[0] >= '6'
-}
-
-// clientFingerprint hashes IP plus user agent. It is a spam signal only, and
-// hashing means no raw address is stored against a lead.
-func clientFingerprint(r *http.Request) string {
-	ip := r.Header.Get("X-Forwarded-For")
-	if comma := strings.IndexByte(ip, ','); comma > 0 {
-		ip = ip[:comma]
-	}
-	if ip == "" {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err == nil {
-			ip = host
-		} else {
-			ip = r.RemoteAddr
-		}
-	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(ip) + "|" + r.UserAgent()))
-	return hex.EncodeToString(sum[:16])
 }

@@ -85,6 +85,20 @@ type Store struct{ db *database.DB }
 func NewStore(db *database.DB) *Store { return &Store{db: db} }
 
 // ListForMap returns every plot in the society. viewer may be uuid.Nil.
+// PubliclyListed reports whether a society may be read without signing in.
+// The lead package filters on this for the marketing view; the map and the
+// summary have to honour it too, or a project the builder has not announced is
+// still readable by anyone who can guess its id.
+func (s *Store) PubliclyListed(ctx context.Context, societyID uuid.UUID) (bool, error) {
+	var listed bool
+	err := s.db.QueryRow(ctx,
+		`SELECT public_listing FROM societies WHERE id = $1`, societyID).Scan(&listed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return listed, err
+}
+
 func (s *Store) ListForMap(ctx context.Context, societyID, viewer uuid.UUID) ([]MapPlot, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, plot_no, COALESCE(phase,''), area_sqft, COALESCE(facing,''),
@@ -275,6 +289,9 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if identity, ok := auth.FromContext(r.Context()); ok {
 		viewer = identity.UserID
 	}
+	if err := h.visible(r, societyID, viewer); err != nil {
+		return err
+	}
 
 	plots, err := h.store.ListForMap(r.Context(), societyID, viewer)
 	if err != nil {
@@ -288,6 +305,14 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return httpx.BadRequest("Not a valid society id.")
 	}
+	viewer := uuid.Nil
+	if identity, ok := auth.FromContext(r.Context()); ok {
+		viewer = identity.UserID
+	}
+	if err := h.visible(r, societyID, viewer); err != nil {
+		return err
+	}
+
 	sum, err := h.store.Summary(r.Context(), societyID)
 	if err != nil {
 		return httpx.Internal(err)
@@ -310,7 +335,20 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) error {
 		return httpx.Internal(err)
 	}
 
+	// Being staff is not enough — it has to be staff at THIS builder.
+	//
+	// Guarding only the mutations left this read open: any staff account at any
+	// builder could guess a plot id and read the owner's name, the site
+	// office's private notes, the owner's unpaid dues and staff-only documents
+	// such as the sale deed. The plot's public facts stay visible either way,
+	// because the layout map already shows them.
 	staff := identity.Role.IsStaff()
+	if staff {
+		if err := h.guard.Plot(r.Context(), identity.Role, identity.BuilderID, plotID); err != nil {
+			staff = false
+		}
+	}
+
 	mine := ownerID != uuid.Nil && ownerID == identity.UserID
 	detail.IsMine = mine
 
@@ -328,6 +366,26 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) error {
 		return httpx.Internal(err)
 	}
 	return httpx.JSON(w, http.StatusOK, detail)
+}
+
+// visible allows a guest to read a society's layout only while the builder has
+// it publicly listed. Anyone signed in may still read it, since an owner needs
+// their own project whether or not it is being marketed.
+func (h *Handler) visible(r *http.Request, societyID, viewer uuid.UUID) error {
+	if viewer != uuid.Nil {
+		return nil
+	}
+	listed, err := h.store.PubliclyListed(r.Context(), societyID)
+	if errors.Is(err, ErrNotFound) {
+		return httpx.NotFound("That society does not exist.")
+	}
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	if !listed {
+		return httpx.NotFound("That society does not exist.")
+	}
+	return nil
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {

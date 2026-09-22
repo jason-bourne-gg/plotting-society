@@ -511,3 +511,78 @@ func TestAuthRoutesAreRegistered(t *testing.T) {
 		t.Errorf("POST /api/auth/invites without a token = %d, want 401", rec.Code)
 	}
 }
+
+// Argon2id makes each guess cost ~50ms, which raises the price of a brute
+// force but does not bound it. This does.
+func TestLoginIsRateLimited(t *testing.T) {
+	f := newHandlerFixture(t)
+
+	attempt := func(email, password, client string) int {
+		r := post(`{"email":"` + email + `","password":"` + password + `"}`)
+		r.RemoteAddr = client + ":40000"
+		r.Header.Set("User-Agent", "attacker/1")
+		return apiStatus(t, f.h.login(httptest.NewRecorder(), r))
+	}
+
+	for i := 0; i < loginAttempts; i++ {
+		if got := attempt("admin@alpha.in", "wrong-password", "203.0.113.1"); got != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status = %d, want 401", i+1, got)
+		}
+	}
+	if got := attempt("admin@alpha.in", "wrong-password", "203.0.113.1"); got != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429 once the budget is spent", got)
+	}
+
+	// The email is now blocked from anywhere, so a botnet cannot grind it.
+	if got := attempt("admin@alpha.in", "wrong-password", "198.51.100.9"); got != http.StatusTooManyRequests {
+		t.Errorf("status = %d from a fresh client; the email budget should still apply", got)
+	}
+
+	// A different account from a fresh client is unaffected.
+	if got := attempt("owner@example.in", "wrong-password", "198.51.100.9"); got != http.StatusUnauthorized {
+		t.Errorf("status = %d; an unrelated account should not be locked out", got)
+	}
+}
+
+// Someone who has just proved who they are should not be one typo from a lockout.
+func TestASuccessfulLoginClearsTheBudget(t *testing.T) {
+	f := newHandlerFixture(t)
+
+	fail := func() int {
+		r := post(`{"email":"admin@alpha.in","password":"wrong-password"}`)
+		r.RemoteAddr = "203.0.113.2:40000"
+		return apiStatus(t, f.h.login(httptest.NewRecorder(), r))
+	}
+	for i := 0; i < loginAttempts-1; i++ {
+		fail()
+	}
+
+	ok := post(`{"email":"admin@alpha.in","password":"` + testPassword + `"}`)
+	ok.RemoteAddr = "203.0.113.2:40000"
+	if err := f.h.login(httptest.NewRecorder(), ok); err != nil {
+		t.Fatalf("the correct password should still work: %v", err)
+	}
+
+	// Budget reset, so the next wrong guess is a 401 and not a 429.
+	if got := fail(); got != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 — the budget should have been cleared", got)
+	}
+}
+
+func TestRefreshIsRateLimited(t *testing.T) {
+	f := newHandlerFixture(t)
+
+	attempt := func() int {
+		r := post(`{"refreshToken":"guess"}`)
+		r.RemoteAddr = "203.0.113.3:40000"
+		return apiStatus(t, f.h.refresh(httptest.NewRecorder(), r))
+	}
+	for i := 0; i < refreshAttempts; i++ {
+		if got := attempt(); got != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status = %d", i+1, got)
+		}
+	}
+	if got := attempt(); got != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", got)
+	}
+}

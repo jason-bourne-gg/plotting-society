@@ -18,3 +18,5 @@
 /web/dist/
 coverage.out
 web/tsconfig.tsbuildinfo
+coverage*.out
+coverage*.html

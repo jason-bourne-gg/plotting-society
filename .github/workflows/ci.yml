@@ -50,11 +50,17 @@ jobs:
 
       # A floor, not a target. It exists so a change that quietly drops a whole
       # module's tests fails here rather than in production.
+      #
+      # internal/testsupport is excluded: it is the fixture helper the tests
+      # themselves use, and its error branches only fire when a fixture insert
+      # fails. Counting test scaffolding as production code measured the wrong
+      # thing and hid the real number by four points.
       - name: Coverage floor
         run: |
-          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print substr($3, 1, length($3)-1)}')
-          echo "total coverage: ${total}%"
-          awk -v t="$total" 'BEGIN { if (t < 85) { print "below the 85% floor"; exit 1 } }'
+          grep -v '/internal/testsupport/' coverage.out > coverage.prod.out
+          total=$(go tool cover -func=coverage.prod.out | tail -1 | awk '{print substr($3, 1, length($3)-1)}')
+          echo "production coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { if (t < 93) { print "below the 93% floor"; exit 1 } }'
 
       - name: Schema smoke tests
         run: |

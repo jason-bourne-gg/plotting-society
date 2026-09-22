@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"testing/fstest"
 
 	"github.com/jackc/pgx/v5"
 	"os"
@@ -158,5 +159,120 @@ func TestConnectHonoursAnExplicitExecMode(t *testing.T) {
 
 	if got := db.Config().ConnConfig.DefaultQueryExecMode; got != pgx.QueryExecModeCacheStatement {
 		t.Errorf("DefaultQueryExecMode = %v, want the explicit cache_statement to win", got)
+	}
+}
+
+// newDB gives each migration test its own database.
+func newMigrationDB(t *testing.T, name string) *DB {
+	t.Helper()
+	ctx := context.Background()
+
+	admin, err := Connect(ctx, baseURL())
+	if err != nil {
+		t.Skipf("no Postgres reachable (%v)", err)
+	}
+	if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)"); err != nil {
+		t.Fatalf("drop: %v", err)
+	}
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	admin.Close()
+
+	db, err := Connect(ctx, strings.Replace(baseURL(), "/plotting?", "/"+name+"?", 1))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(db.Close)
+	return db
+}
+
+// A migration that fails must leave nothing behind — not the half of it that
+// ran, and not a row in schema_migrations claiming it succeeded.
+func TestMigrateRollsBackAFailedMigration(t *testing.T) {
+	db := newMigrationDB(t, "plottest_rollback")
+	ctx := context.Background()
+
+	broken := fstest.MapFS{
+		"m/0001_ok.sql":     &fstest.MapFile{Data: []byte(`CREATE TABLE first (id int);`)},
+		"m/0002_broken.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE second (id int); SELECT this_function_does_not_exist();`)},
+	}
+
+	err := db.migrateFrom(ctx, broken, "m")
+	if err == nil {
+		t.Fatal("a broken migration should fail the run")
+	}
+	if !strings.Contains(err.Error(), "0002_broken.sql") {
+		t.Errorf("the error should name the migration, got: %v", err)
+	}
+
+	// The good one stays applied; the broken one leaves no trace.
+	var applied []string
+	rows, qerr := db.Query(ctx, `SELECT version FROM schema_migrations ORDER BY version`)
+	if qerr != nil {
+		t.Fatal(qerr)
+	}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		applied = append(applied, v)
+	}
+	rows.Close()
+
+	if len(applied) != 1 || applied[0] != "0001_ok.sql" {
+		t.Errorf("schema_migrations = %v, want only the one that succeeded", applied)
+	}
+
+	var exists bool
+	if err := db.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'second')`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Error("the broken migration's first statement survived — it did not roll back")
+	}
+}
+
+// Filename order is the contract: 0002 must not run before 0001.
+func TestMigrateAppliesInFilenameOrder(t *testing.T) {
+	db := newMigrationDB(t, "plottest_order")
+	ctx := context.Background()
+
+	ordered := fstest.MapFS{
+		// 0002 depends on the table 0001 creates, so a wrong order fails loudly.
+		"m/0002_second.sql": &fstest.MapFile{Data: []byte(`ALTER TABLE base ADD COLUMN added int;`)},
+		"m/0001_first.sql":  &fstest.MapFile{Data: []byte(`CREATE TABLE base (id int);`)},
+	}
+	if err := db.migrateFrom(ctx, ordered, "m"); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	var exists bool
+	if err := db.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+		                 WHERE table_name = 'base' AND column_name = 'added')`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Error("the second migration did not apply")
+	}
+}
+
+func TestMigrateSkipsDirectoriesAndMissingSource(t *testing.T) {
+	db := newMigrationDB(t, "plottest_source")
+	ctx := context.Background()
+
+	withDir := fstest.MapFS{
+		"m/0001_ok.sql":     &fstest.MapFile{Data: []byte(`CREATE TABLE only_one (id int);`)},
+		"m/nested/skip.sql": &fstest.MapFile{Data: []byte(`SELECT 1/0;`)},
+	}
+	if err := db.migrateFrom(ctx, withDir, "m"); err != nil {
+		t.Fatalf("a nested directory should be skipped, not read: %v", err)
+	}
+
+	if err := db.migrateFrom(ctx, withDir, "does-not-exist"); err == nil {
+		t.Error("a missing source directory should fail")
 	}
 }
