@@ -9,6 +9,7 @@
 package lead
 
 import (
+	"encoding/json"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -56,8 +57,10 @@ type PublicSociety struct {
 	Address     string    `json:"address,omitempty"`
 	RERANumber  string    `json:"reraNumber,omitempty"`
 	Tagline     string    `json:"tagline,omitempty"`
-	Highlights  []byte    `json:"highlights,omitempty"`
-	Amenities   []byte    `json:"amenities,omitempty"`
+	// jsonb. Must be json.RawMessage, not []byte: the latter marshals to a
+	// base64 string and the client gets "W3si..." instead of an array.
+	Highlights  json.RawMessage `json:"highlights,omitempty"`
+	Amenities   json.RawMessage `json:"amenities,omitempty"`
 	BrochureURL string    `json:"brochureUrl,omitempty"`
 	Phone       string    `json:"contactPhone,omitempty"`
 	Email       string    `json:"contactEmail,omitempty"`

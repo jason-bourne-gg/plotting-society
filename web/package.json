@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --port 4173",
     "typecheck": "tsc -b --noEmit",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "smoke": "node ../test/smoke.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -24,6 +25,7 @@
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.0.0",
+    "playwright": "^1.48.0"
   }
 }

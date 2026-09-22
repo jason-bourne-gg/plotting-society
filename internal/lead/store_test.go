@@ -448,3 +448,7 @@ func TestRoutesAreRegistered(t *testing.T) {
 		t.Errorf("the staff route status = %d, want 401 without a token", rec.Code)
 	}
 }
+
+
+// dbCtx is a plain background context, for tests that set fixtures up directly.
+func (f fixture) dbCtx() context.Context { return context.Background() }

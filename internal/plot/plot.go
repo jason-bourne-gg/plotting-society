@@ -5,6 +5,7 @@
 package plot
 
 import (
+	"encoding/json"
 	"context"
 	"errors"
 	"net/http"
@@ -34,7 +35,8 @@ type MapPlot struct {
 	IsCorner  bool      `json:"isCorner"`
 	Status    string    `json:"status"`
 	Price     *float64  `json:"price,omitempty"`
-	MapShape  []byte    `json:"mapShape,omitempty"`
+	// jsonb. json.RawMessage, not []byte — see the note in internal/lead.
+	MapShape  json.RawMessage `json:"mapShape,omitempty"`
 	IsMine    bool      `json:"isMine"`
 }
 
@@ -207,7 +209,7 @@ type UpsertInput struct {
 	IsCorner bool     `json:"isCorner"`
 	Status   string   `json:"status"`
 	Price    *float64 `json:"price"`
-	MapShape []byte   `json:"mapShape"`
+	MapShape json.RawMessage `json:"mapShape"`
 	Notes    string   `json:"notes"`
 }
 
