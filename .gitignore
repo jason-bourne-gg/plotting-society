@@ -1,0 +1,18 @@
+# binaries
+/bin/
+/api
+*.test
+
+# env
+.env
+.env.local
+*.pem
+
+# local data
+/tmp/
+/.data/
+.DS_Store
+
+# frontend
+/web/node_modules/
+/web/dist/

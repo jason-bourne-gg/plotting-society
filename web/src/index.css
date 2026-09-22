@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-cream text-olive-950 font-sans antialiased;
+    background-image:
+      radial-gradient(1200px 600px at 100% -10%, rgba(201, 162, 39, 0.10), transparent 60%),
+      radial-gradient(900px 500px at -10% 10%, rgba(92, 110, 55, 0.10), transparent 55%);
+    background-attachment: fixed;
+  }
+
+  /* The layout map is wide; let it scroll without dragging the page with it. */
+  ::-webkit-scrollbar { height: 10px; width: 10px; }
+  ::-webkit-scrollbar-thumb { @apply bg-olive-300 rounded-full; }
+  ::-webkit-scrollbar-track { @apply bg-olive-50; }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-olive-200/70 bg-white/80 backdrop-blur shadow-card;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5
+           text-sm font-semibold transition
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-400
+           focus-visible:ring-offset-2 focus-visible:ring-offset-cream
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-olive-700 text-white hover:bg-olive-800 active:scale-[.98] shadow-card;
+  }
+  .btn-gold {
+    @apply btn bg-gradient-to-br from-gold-400 to-gold-600 text-olive-950
+           hover:from-gold-300 hover:to-gold-500 active:scale-[.98] shadow-card;
+  }
+  .btn-ghost {
+    @apply btn border border-olive-200 bg-white/70 text-olive-800 hover:bg-white hover:border-olive-300;
+  }
+
+  .field {
+    @apply w-full rounded-xl border border-olive-200 bg-white px-3.5 py-2.5 text-sm
+           text-olive-950 placeholder:text-olive-400
+           focus:border-olive-400 focus:outline-none focus:ring-2 focus:ring-olive-200;
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wider text-olive-600;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold;
+  }
+}
