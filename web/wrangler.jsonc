@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "plotting-society",
+  "compatibility_date": "2025-09-01",
+
+  // A static-assets-only Worker: there is no "main", so Cloudflare serves the
+  // built site directly from the edge and never runs any code of ours. The API
+  // is a separate service on Render; the browser talks to it directly using
+  // VITE_API_BASE_URL, which is baked in at build time.
+  "assets": {
+    "directory": "./dist",
+
+    // The router owns /my-plot, /queries/:id and the rest. Without this, a
+    // refresh or a shared link on one of those paths asks the edge for a file
+    // that does not exist and gets a 404. "single-page-application" serves
+    // index.html instead and lets the router take over, while real files under
+    // /assets are still matched first.
+    "not_found_handling": "single-page-application"
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}

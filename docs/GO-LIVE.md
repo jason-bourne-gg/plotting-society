@@ -162,3 +162,39 @@ Nothing gets rewritten. Either:
   sits on their own server.
 
 Charge per society per month and the infrastructure is a rounding error.
+
+---
+
+## Cloudflare: Worker vs Pages
+
+Cloudflare has folded Pages into Workers, and the dashboard now steers you to
+**Workers**. Either works; the repo is configured for a Worker, because that is
+what the dashboard gives you by default.
+
+`web/wrangler.jsonc` declares a **static-assets-only Worker**: there is no
+`main`, so Cloudflare serves the built site straight from the edge and never
+runs any code of ours. `not_found_handling: "single-page-application"` is what
+makes `/my-plot` survive a refresh.
+
+In the Worker's **Settings → Build**:
+
+| Field | Value |
+|---|---|
+| Root directory | `web` |
+| Build command | `npm run build` |
+| Deploy command | `npx wrangler deploy` |
+
+In **Settings → Variables → Build variables** (build-time, not runtime — the
+value is compiled into the bundle):
+
+```
+VITE_API_BASE_URL = https://plotting-society-api.onrender.com
+```
+
+Then **Settings → Domains & Routes → enable the `workers.dev` URL**, which is
+off by default on a new Worker. That is what "No URLs enabled" means.
+
+If you would rather use Pages: Workers & Pages → Create → **Pages** tab →
+Connect to Git, root directory `web`, build `npm run build`, output `dist`.
+`web/public/_redirects` handles the routing there instead, and `wrangler.jsonc`
+is simply ignored.
