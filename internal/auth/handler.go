@@ -10,18 +10,20 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jason-bourne-gg/plotting-society/internal/domain"
+	"github.com/jason-bourne-gg/plotting-society/internal/access"
 	"github.com/jason-bourne-gg/plotting-society/internal/httpx"
 )
 
 type Handler struct {
 	store  *Store
 	tokens *TokenIssuer
+	guard  *access.Guard
 	// inviteBaseURL is where the emailed link points, e.g. https://app/invite
 	inviteBaseURL string
 }
 
-func NewHandler(store *Store, tokens *TokenIssuer, inviteBaseURL string) *Handler {
-	return &Handler{store: store, tokens: tokens, inviteBaseURL: inviteBaseURL}
+func NewHandler(store *Store, tokens *TokenIssuer, guard *access.Guard, inviteBaseURL string) *Handler {
+	return &Handler{store: store, tokens: tokens, guard: guard, inviteBaseURL: inviteBaseURL}
 }
 
 // Routes registers everything under /api/auth.
@@ -282,6 +284,12 @@ func (h *Handler) createInvite(w http.ResponseWriter, r *http.Request) error {
 		plotID, err := uuid.Parse(req.PlotID)
 		if err != nil {
 			return httpx.Invalid(map[string]string{"plotId": "Not a valid plot id."})
+		}
+		// Without this, staff at one builder could invite an "owner" onto any
+		// plot in the database and accepting the invite would mark another
+		// builder's plot sold and hand it over.
+		if err := h.guard.Plot(r.Context(), caller.Role, caller.BuilderID, plotID); err != nil {
+			return err
 		}
 		invite.PlotID = &plotID
 		invite.BuilderID = nil

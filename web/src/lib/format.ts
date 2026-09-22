@@ -61,3 +61,23 @@ export const QUERY_STATUS: Record<string, { label: string; chip: string }> = {
   resolved: { label: 'Resolved', chip: 'bg-emerald-100 text-emerald-800' },
   closed: { label: 'Closed', chip: 'bg-slate-200 text-slate-700' },
 }
+
+/**
+ * Returns a URL only if it is safe to put in an href.
+ *
+ * Attachment, document and receipt URLs come out of the database, and the API
+ * accepts them as strings so an upload can be presigned and PUT in one round
+ * trip. A "javascript:" URL stored there becomes stored XSS the moment someone
+ * clicks the link. The server rejects those on write; this is the second lock,
+ * so old rows written before that check cannot bite either.
+ */
+export function safeUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  try {
+    const url = new URL(raw, window.location.origin)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    return url.href
+  } catch {
+    return null
+  }
+}

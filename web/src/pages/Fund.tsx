@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type FundBalance, type FundEntry } from '../lib/api'
 import { useSociety } from '../lib/useSociety'
-import { inr, shortDate } from '../lib/format'
+import { inr, safeUrl, shortDate } from '../lib/format'
 import { Spinner, ErrorNote, Stat, SectionTitle, Empty } from '../components/ui'
 
 const HEAD_COLOURS = [
@@ -106,8 +106,13 @@ export default function Fund() {
                 ) : (
                   <span className="font-semibold text-olive-700">−{inr(e.debit)}</span>
                 )}
-                {e.documentUrl && (
-                  <a className="btn-ghost px-3 py-1.5 text-xs" href={e.documentUrl} target="_blank" rel="noreferrer">
+                {safeUrl(e.documentUrl) && (
+                  <a
+                    className="btn-ghost px-3 py-1.5 text-xs"
+                    href={safeUrl(e.documentUrl)!}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
                     Bill
                   </a>
                 )}

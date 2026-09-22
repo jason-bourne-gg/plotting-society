@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/jason-bourne-gg/plotting-society/internal/auth"
+	"github.com/jason-bourne-gg/plotting-society/internal/access"
 	"github.com/jason-bourne-gg/plotting-society/internal/database"
 	"github.com/jason-bourne-gg/plotting-society/internal/domain"
 	"github.com/jason-bourne-gg/plotting-society/internal/httpx"
@@ -236,9 +237,14 @@ func (s *Store) Update(ctx context.Context, plotID uuid.UUID, in UpsertInput) er
 
 // ------------------------------------------------------------------ handler
 
-type Handler struct{ store *Store }
+type Handler struct {
+	store *Store
+	guard *access.Guard
+}
 
-func NewHandler(store *Store) *Handler { return &Handler{store: store} }
+func NewHandler(store *Store, guard *access.Guard) *Handler {
+	return &Handler{store: store, guard: guard}
+}
 
 func (h *Handler) Routes(mux *http.ServeMux, a *auth.Authenticator) {
 	mux.Handle("GET /api/societies/{societyId}/plots", a.Optional(httpx.Handler(h.list)))
@@ -322,6 +328,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return httpx.BadRequest("Not a valid society id.")
 	}
+	// RequireStaff proves the caller is a builder, not that they are this one.
+	caller := auth.MustFromContext(r.Context())
+	if err := h.guard.Society(r.Context(), caller.Role, caller.BuilderID, societyID); err != nil {
+		return err
+	}
 	in, err := decodeUpsert(r)
 	if err != nil {
 		return err
@@ -341,6 +352,10 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return httpx.BadRequest("Not a valid plot id.")
 	}
+	caller := auth.MustFromContext(r.Context())
+	if err := h.guard.Plot(r.Context(), caller.Role, caller.BuilderID, plotID); err != nil {
+		return err
+	}
 	in, err := decodeUpsert(r)
 	if err != nil {
 		return err
@@ -348,6 +363,11 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) error {
 	if err := h.store.Update(r.Context(), plotID, in); errors.Is(err, ErrNotFound) {
 		return httpx.NotFound("That plot does not exist.")
 	} else if err != nil {
+		// Renaming a plot onto a number that already exists is the caller's
+		// mistake, the same as it is on create.
+		if strings.Contains(err.Error(), "plots_society_id_plot_no_key") {
+			return httpx.Conflict("A plot with that number already exists in this society.")
+		}
 		return httpx.Internal(err)
 	}
 	return httpx.NoContent(w)

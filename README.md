@@ -145,11 +145,54 @@ allowance.
 
 ---
 
-## Verification status
+## Tests
 
-- ✅ Schema applies cleanly; 9 schema/business-rule smoke tests pass (`make smoke`)
-- ⏳ Go build and tests not yet run — the toolchain is not installed on this machine
-- ⏳ Frontend `npm install` / typecheck not yet run
+```bash
+make up            # the integration tests need a real Postgres
+make test          # with Go installed
+make test-docker   # without: runs the toolchain in a container
+make cover         # coverage by package
+make smoke         # schema and business-rule checks in SQL
+```
 
-Run `brew install go && make build && make test` and `cd web && npm install &&
-npm run typecheck` to close the last two.
+| Package | Coverage | |
+|---|---|---|
+| `access` | **100.0%** | tenancy guard |
+| `config` | **100.0%** | env loading |
+| `domain` | **100.0%** | roles, statuses, SLA table |
+| `httpx` | **100.0%** | errors, JSON, middleware |
+| `media` | 98.4% | SigV4 signing, presigned uploads |
+| `lead` | 96.3% | guest access and enquiries |
+| `auth` | 94.6% | Argon2id, JWT, invites, sessions |
+| `fund` | 93.8% | append-only ledger |
+| `plot` | 93.6% | layout map, plot detail |
+| `query` | 93.2% | tickets, threads, SLA clocks |
+| `update` | 91.4% | progress feed |
+| `database` | 78.0% | pool and migrations |
+| **total** | **93.3%** | |
+
+The store and handler layers are tested against a real Postgres rather than a
+mock, because what they mostly contain is SQL — and a mock will happily agree
+that a query filters by `builder_id` when it does not. Each package gets its own
+database so the suite can run packages in parallel.
+
+The remaining 6.7% is error handling that cannot be reached without injecting
+faults below the driver: `crypto/rand` failing, HMAC signing failing, and
+`rows.Scan` failing mid-stream after the query has already succeeded. Reaching
+those would mean putting an interface in front of pgx's row iteration — real
+structural cost for no runtime benefit. Everything reachable is covered,
+including a "the database is down" path through every handler, which asserts the
+API returns 500 rather than a silent empty success.
+
+### What the tests caught
+
+Two bugs found while writing them, both now fixed:
+
+- **The server would not have started.** `GET /api/societies/by-slug/{slug}` and
+  `GET /api/societies/{societyId}/plots` overlap, and Go's `ServeMux` *panics* at
+  registration on an ambiguous pattern. The redundant route is gone.
+- Renaming a plot onto a number that already exists returned a 500 where the
+  create path correctly returned a 409.
+
+Three security issues from a review pass, also fixed — see the tenancy guard in
+`internal/access`, which every staff-only route now goes through.

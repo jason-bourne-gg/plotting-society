@@ -31,8 +31,15 @@ reseed: ## Wipe and re-seed
 build: ## Build the binary into ./bin
 	CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o bin/api ./cmd/api
 
-test: ## Run the Go test suite
+test: ## Run the Go test suite (needs `make up` for the integration tests)
 	go test ./... -race -count=1
+
+test-docker: ## Run the suite without a local Go install
+	./go.sh test ./internal/... -count=1
+
+cover: ## Coverage report by package
+	./go.sh test ./internal/... -coverprofile=coverage.out -count=1
+	./go.sh tool cover -func=coverage.out | tail -1
 
 smoke: ## Run the schema smoke tests against the local database
 	docker compose exec -T postgres psql -U plot -d plotting -v ON_ERROR_STOP=1 -f - < test/schema_smoke.sql
@@ -46,4 +53,4 @@ tidy: ## Sync go.mod / go.sum
 docker: ## Build the production image
 	docker build -t plotting-society:local .
 
-.PHONY: help up down reset run seed reseed build test smoke vet tidy docker
+.PHONY: help up down reset run seed reseed build test test-docker cover smoke vet tidy docker

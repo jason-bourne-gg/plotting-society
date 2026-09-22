@@ -3,6 +3,7 @@
 package domain
 
 import (
+	"net/url"
 	"time"
 
 	"github.com/google/uuid"
@@ -97,4 +98,29 @@ func ValidQueryStatus(s string) bool {
 		return true
 	}
 	return false
+}
+
+// SafeExternalURL reports whether a URL supplied by a client is safe to store
+// and later render into an href.
+//
+// Attachment, document and media URLs are accepted as strings from the client
+// so that an upload can be presigned and PUT without a second round trip. That
+// means a caller can also submit "javascript:…", which becomes stored XSS the
+// moment a member of staff clicks the link in a thread. Only absolute http(s)
+// URLs are allowed through.
+func SafeExternalURL(raw string) bool {
+	if raw == "" {
+		return true // optional field, absent is fine
+	}
+	if len(raw) > 2048 {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	return u.Host != ""
 }

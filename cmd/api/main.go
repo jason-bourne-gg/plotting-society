@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jason-bourne-gg/plotting-society/internal/auth"
+	"github.com/jason-bourne-gg/plotting-society/internal/access"
 	"github.com/jason-bourne-gg/plotting-society/internal/config"
 	"github.com/jason-bourne-gg/plotting-society/internal/database"
 	"github.com/jason-bourne-gg/plotting-society/internal/fund"
@@ -75,18 +76,23 @@ func run() error {
 		return httpx.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}))
 
-	authStore := auth.NewStore(db)
-	auth.NewHandler(authStore, tokens, cfg.PublicBaseURL+"/invite").Routes(mux, authenticator)
+	// One guard answers "may this caller act on this record?" for every
+	// staff-only route. RequireStaff proves the caller is a builder; the guard
+	// proves they are *this* builder.
+	guard := access.NewGuard(db)
 
-	plotHandler := plot.NewHandler(plot.NewStore(db))
+	authStore := auth.NewStore(db)
+	auth.NewHandler(authStore, tokens, guard, cfg.PublicBaseURL+"/invite").Routes(mux, authenticator)
+
+	plotHandler := plot.NewHandler(plot.NewStore(db), guard)
 	plotHandler.Routes(mux, authenticator)
 	plotHandler.SocietyRoutes(mux, authenticator)
 
-	query.NewHandler(query.NewStore(db)).Routes(mux, authenticator)
+	query.NewHandler(query.NewStore(db), guard).Routes(mux, authenticator)
 	// Guest surface: public society view plus the enquiry form.
-	lead.NewHandler(lead.NewStore(db)).Routes(mux, authenticator)
-	fund.NewHandler(fund.NewStore(db)).Routes(mux, authenticator)
-	update.NewHandler(update.NewStore(db)).Routes(mux, authenticator)
+	lead.NewHandler(lead.NewStore(db), guard).Routes(mux, authenticator)
+	fund.NewHandler(fund.NewStore(db), guard).Routes(mux, authenticator)
+	update.NewHandler(update.NewStore(db), guard).Routes(mux, authenticator)
 	media.NewHandler(media.NewSigner(cfg.S3)).Routes(mux, authenticator)
 
 	handler := httpx.Chain(mux,

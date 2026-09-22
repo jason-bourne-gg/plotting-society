@@ -12,7 +12,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jason-bourne-gg/plotting-society/internal/auth"
+	"github.com/jason-bourne-gg/plotting-society/internal/access"
 	"github.com/jason-bourne-gg/plotting-society/internal/database"
+	"github.com/jason-bourne-gg/plotting-society/internal/domain"
 	"github.com/jason-bourne-gg/plotting-society/internal/httpx"
 )
 
@@ -156,9 +158,14 @@ func (s *Store) Publish(ctx context.Context, postID uuid.UUID) error {
 
 // ------------------------------------------------------------------ handler
 
-type Handler struct{ store *Store }
+type Handler struct {
+	store *Store
+	guard *access.Guard
+}
 
-func NewHandler(store *Store) *Handler { return &Handler{store: store} }
+func NewHandler(store *Store, guard *access.Guard) *Handler {
+	return &Handler{store: store, guard: guard}
+}
 
 func (h *Handler) Routes(mux *http.ServeMux, a *auth.Authenticator) {
 	mux.Handle("GET /api/societies/{societyId}/updates", a.Optional(httpx.Handler(h.list)))
@@ -195,6 +202,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		return httpx.BadRequest("Not a valid society id.")
 	}
 	identity := auth.MustFromContext(r.Context())
+	if err := h.guard.Society(r.Context(), identity.Role, identity.BuilderID, societyID); err != nil {
+		return err
+	}
 
 	var in NewPost
 	if err := httpx.DecodeJSON(r, &in); err != nil {
@@ -206,6 +216,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	if len(in.Media) > 20 {
 		return httpx.Invalid(map[string]string{"media": "Attach at most 20 photos per update."})
+	}
+	for _, m := range in.Media {
+		if m.URL == "" || !domain.SafeExternalURL(m.URL) {
+			return httpx.Invalid(map[string]string{"media": "Photos must be http or https links."})
+		}
 	}
 
 	id, err := h.store.Create(r.Context(), societyID, identity.UserID, in)
@@ -219,6 +234,10 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request) error {
 	postID, err := uuid.Parse(r.PathValue("postId"))
 	if err != nil {
 		return httpx.BadRequest("Not a valid update id.")
+	}
+	caller := auth.MustFromContext(r.Context())
+	if err := h.guard.Update(r.Context(), caller.Role, caller.BuilderID, postID); err != nil {
+		return err
 	}
 	if err := h.store.Publish(r.Context(), postID); errors.Is(err, ErrNotFound) {
 		return httpx.NotFound("That update does not exist.")

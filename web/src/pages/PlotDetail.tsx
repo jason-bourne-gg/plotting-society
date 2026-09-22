@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type Plot, type PlotDetail as Detail } from '../lib/api'
 import { useSociety } from '../lib/useSociety'
-import { inr, sqft, shortDate } from '../lib/format'
+import { inr, safeUrl, sqft, shortDate } from '../lib/format'
 import { Spinner, ErrorNote, StatusChip, SectionTitle, Empty } from '../components/ui'
 
 /** `mine` resolves the signed-in owner's plot instead of taking one from the URL. */
@@ -139,8 +139,13 @@ export default function PlotDetailPage({ mine = false }: { mine?: boolean }) {
                   ) : (
                     <span className="chip bg-emerald-100 text-emerald-800">Paid</span>
                   )}
-                  {d.receiptUrl && (
-                    <a className="btn-ghost px-3 py-1.5 text-xs" href={d.receiptUrl} target="_blank" rel="noreferrer">
+                  {safeUrl(d.receiptUrl) && (
+                    <a
+                      className="btn-ghost px-3 py-1.5 text-xs"
+                      href={safeUrl(d.receiptUrl)!}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                    >
                       Receipt
                     </a>
                   )}
@@ -158,9 +163,9 @@ export default function PlotDetailPage({ mine = false }: { mine?: boolean }) {
             {detail.documents.map((doc) => (
               <a
                 key={doc.id}
-                href={doc.url}
+                href={safeUrl(doc.url) ?? '#'}
                 target="_blank"
-                rel="noreferrer"
+                rel="noreferrer noopener"
                 className="card flex items-center gap-3 p-4 transition hover:shadow-lift"
               >
                 <span className="grid h-10 w-10 place-items-center rounded-xl bg-olive-100">📄</span>

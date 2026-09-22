@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type Query, type QueryMessage } from '../lib/api'
 import { useAuth } from '../lib/auth'
-import { relative, shortDate } from '../lib/format'
+import { relative, safeUrl, shortDate } from '../lib/format'
 import { Spinner, ErrorNote, QueryChip, SlaBadge } from '../components/ui'
 
 const STAFF_STATUSES = ['open', 'in_progress', 'waiting_on_owner', 'resolved', 'closed']
@@ -130,12 +130,12 @@ export default function QueryDetail() {
                 </span>
               </div>
               <p className="mt-1.5 whitespace-pre-wrap text-sm">{m.body}</p>
-              {m.attachmentUrl && (
+              {safeUrl(m.attachmentUrl) && (
                 <a
                   className="mt-2 inline-block text-xs font-semibold underline"
-                  href={m.attachmentUrl}
+                  href={safeUrl(m.attachmentUrl)!}
                   target="_blank"
-                  rel="noreferrer"
+                  rel="noreferrer noopener"
                 >
                   Attachment
                 </a>

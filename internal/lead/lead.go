@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/jason-bourne-gg/plotting-society/internal/auth"
+	"github.com/jason-bourne-gg/plotting-society/internal/access"
 	"github.com/jason-bourne-gg/plotting-society/internal/database"
 	"github.com/jason-bourne-gg/plotting-society/internal/httpx"
 )
@@ -234,11 +235,12 @@ func (l *limiter) allow(key string, max int, window time.Duration) bool {
 
 type Handler struct {
 	store   *Store
+	guard   *access.Guard
 	limiter *limiter
 }
 
-func NewHandler(store *Store) *Handler {
-	return &Handler{store: store, limiter: newLimiter()}
+func NewHandler(store *Store, guard *access.Guard) *Handler {
+	return &Handler{store: store, guard: guard, limiter: newLimiter()}
 }
 
 func (h *Handler) Routes(mux *http.ServeMux, a *auth.Authenticator) {
@@ -354,6 +356,11 @@ func (h *Handler) listEnquiries(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return httpx.BadRequest("Not a valid society id.")
 	}
+	caller := auth.MustFromContext(r.Context())
+	if err := h.guard.Society(r.Context(), caller.Role, caller.BuilderID, societyID); err != nil {
+		return err
+	}
+
 	status := r.URL.Query().Get("status")
 	if status != "" && !validEnquiryStatus(status) {
 		return httpx.BadRequest("Unknown status filter.")
@@ -376,6 +383,9 @@ func (h *Handler) updateEnquiry(w http.ResponseWriter, r *http.Request) error {
 		return httpx.BadRequest("Not a valid enquiry id.")
 	}
 	identity := auth.MustFromContext(r.Context())
+	if err := h.guard.Enquiry(r.Context(), identity.Role, identity.BuilderID, id); err != nil {
+		return err
+	}
 
 	var req struct {
 		Status string `json:"status"`

@@ -16,7 +16,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/jason-bourne-gg/plotting-society/internal/auth"
+	"github.com/jason-bourne-gg/plotting-society/internal/access"
 	"github.com/jason-bourne-gg/plotting-society/internal/database"
+	"github.com/jason-bourne-gg/plotting-society/internal/domain"
 	"github.com/jason-bourne-gg/plotting-society/internal/httpx"
 )
 
@@ -146,9 +148,14 @@ func (s *Store) Reverse(ctx context.Context, entryID, createdBy uuid.UUID, reaso
 
 // ------------------------------------------------------------------ handler
 
-type Handler struct{ store *Store }
+type Handler struct {
+	store *Store
+	guard *access.Guard
+}
 
-func NewHandler(store *Store) *Handler { return &Handler{store: store} }
+func NewHandler(store *Store, guard *access.Guard) *Handler {
+	return &Handler{store: store, guard: guard}
+}
 
 func (h *Handler) Routes(mux *http.ServeMux, a *auth.Authenticator) {
 	// Every signed-in owner reads the ledger. That transparency is the point.
@@ -166,6 +173,23 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return httpx.BadRequest("Not a valid society id.")
 	}
+	// Owners read their own society's ledger; staff read their builder's. Both
+	// must be scoped, or any signed-in user could read any builder's accounts.
+	caller := auth.MustFromContext(r.Context())
+	if caller.Role.IsStaff() {
+		if err := h.guard.Society(r.Context(), caller.Role, caller.BuilderID, societyID); err != nil {
+			return err
+		}
+	} else {
+		ok, err := h.store.OwnerInSociety(r.Context(), caller.UserID, societyID)
+		if err != nil {
+			return httpx.Internal(err)
+		}
+		if !ok {
+			return httpx.NotFound("That society does not exist.")
+		}
+	}
+
 	limit := httpx.QueryInt(r, "limit", 200, 1, 1000)
 
 	entries, err := h.store.List(r.Context(), societyID, limit)
@@ -185,6 +209,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		return httpx.BadRequest("Not a valid society id.")
 	}
 	identity := auth.MustFromContext(r.Context())
+	if err := h.guard.Society(r.Context(), identity.Role, identity.BuilderID, societyID); err != nil {
+		return err
+	}
 
 	var in NewEntry
 	if err := httpx.DecodeJSON(r, &in); err != nil {
@@ -202,6 +229,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	if _, err := time.Parse("2006-01-02", in.EntryDate); err != nil {
 		fields["entryDate"] = "Use a YYYY-MM-DD date."
+	}
+	if !domain.SafeExternalURL(in.DocumentURL) {
+		fields["documentUrl"] = "Attach an http or https link."
 	}
 	if in.Credit < 0 || in.Debit < 0 {
 		fields["amount"] = "Amounts cannot be negative."
@@ -227,6 +257,9 @@ func (h *Handler) reverse(w http.ResponseWriter, r *http.Request) error {
 		return httpx.BadRequest("Not a valid entry id.")
 	}
 	identity := auth.MustFromContext(r.Context())
+	if err := h.guard.FundEntry(r.Context(), identity.Role, identity.BuilderID, entryID); err != nil {
+		return err
+	}
 
 	var req struct {
 		Reason string `json:"reason"`
@@ -247,4 +280,14 @@ func (h *Handler) reverse(w http.ResponseWriter, r *http.Request) error {
 		return httpx.Internal(err)
 	}
 	return httpx.JSON(w, http.StatusCreated, map[string]any{"id": id})
+}
+
+// OwnerInSociety reports whether the user owns a plot in that society. It is
+// what lets an owner read the ledger without letting them read every builder's.
+func (s *Store) OwnerInSociety(ctx context.Context, userID, societyID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM plots WHERE society_id = $1 AND owner_id = $2)`,
+		societyID, userID).Scan(&ok)
+	return ok, err
 }

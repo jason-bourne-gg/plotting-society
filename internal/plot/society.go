@@ -2,13 +2,12 @@ package plot
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/jason-bourne-gg/plotting-society/internal/auth"
+	"github.com/jason-bourne-gg/plotting-society/internal/domain"
 	"github.com/jason-bourne-gg/plotting-society/internal/httpx"
 )
 
@@ -31,11 +30,19 @@ const societyColumns = `
 	COALESCE(s.address,''), COALESCE(s.layout_image_url,''), s.layout_width,
 	s.layout_height, COALESCE(s.rera_number,'')`
 
-func (s *Store) Societies(ctx context.Context) ([]Society, error) {
+// Societies returns only what the caller is entitled to see: a super admin
+// sees everything, staff see their own builder's projects, and an owner sees
+// the societies they actually hold a plot in. Returning the full list would
+// leak every builder's project names to any signed-in user.
+func (s *Store) Societies(ctx context.Context, role domain.Role, builderID *uuid.UUID, userID uuid.UUID) ([]Society, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT `+societyColumns+`
 		  FROM societies s JOIN builders b ON b.id = s.builder_id
-		 ORDER BY s.name`)
+		 WHERE $1 = true
+		    OR ($2::uuid IS NOT NULL AND s.builder_id = $2)
+		    OR EXISTS (SELECT 1 FROM plots p WHERE p.society_id = s.id AND p.owner_id = $3)
+		 ORDER BY s.name`,
+		role == domain.RoleSuperAdmin, builderID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -54,40 +61,23 @@ func (s *Store) Societies(ctx context.Context) ([]Society, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) SocietyBySlug(ctx context.Context, slug string) (Society, error) {
-	var soc Society
-	err := s.db.QueryRow(ctx, `
-		SELECT `+societyColumns+`
-		  FROM societies s JOIN builders b ON b.id = s.builder_id
-		 WHERE s.slug = $1`, slug,
-	).Scan(&soc.ID, &soc.BuilderID, &soc.BuilderName, &soc.Name, &soc.Slug, &soc.City,
-		&soc.Address, &soc.LayoutImageURL, &soc.LayoutWidth, &soc.LayoutHeight, &soc.RERANumber)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Society{}, ErrNotFound
-	}
-	return soc, err
-}
 
+// SocietyRoutes registers the authenticated society listing.
+//
+// There is deliberately no /api/societies/<something>/{slug} route here: any
+// such pattern overlaps GET /api/societies/{societyId}/plots, and Go's ServeMux
+// panics at registration when two patterns overlap with neither more specific.
+// Slug lookup for guests lives at /api/public/society/{slug} instead.
 func (h *Handler) SocietyRoutes(mux *http.ServeMux, a *auth.Authenticator) {
 	mux.Handle("GET /api/societies", a.RequireAuth(httpx.Handler(h.listSocieties)))
-	mux.Handle("GET /api/societies/by-slug/{slug}", a.Optional(httpx.Handler(h.societyBySlug)))
 }
 
 func (h *Handler) listSocieties(w http.ResponseWriter, r *http.Request) error {
-	list, err := h.store.Societies(r.Context())
+	caller := auth.MustFromContext(r.Context())
+	list, err := h.store.Societies(r.Context(), caller.Role, caller.BuilderID, caller.UserID)
 	if err != nil {
 		return httpx.Internal(err)
 	}
 	return httpx.JSON(w, http.StatusOK, map[string]any{"societies": list})
 }
 
-func (h *Handler) societyBySlug(w http.ResponseWriter, r *http.Request) error {
-	soc, err := h.store.SocietyBySlug(r.Context(), r.PathValue("slug"))
-	if errors.Is(err, ErrNotFound) {
-		return httpx.NotFound("No society with that address.")
-	}
-	if err != nil {
-		return httpx.Internal(err)
-	}
-	return httpx.JSON(w, http.StatusOK, soc)
-}

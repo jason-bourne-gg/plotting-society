@@ -124,3 +124,10 @@ func (a *Authenticator) identify(r *http.Request) (Identity, error) {
 	}
 	return identity, nil
 }
+
+// ContextWithIdentity attaches an identity directly. The middleware above is
+// the only production caller; it is exported so other packages' tests can
+// exercise a handler without minting and parsing a token first.
+func ContextWithIdentity(ctx context.Context, id Identity) context.Context {
+	return context.WithValue(ctx, ctxKey{}, id)
+}

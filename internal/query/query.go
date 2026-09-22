@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/jason-bourne-gg/plotting-society/internal/auth"
+	"github.com/jason-bourne-gg/plotting-society/internal/access"
 	"github.com/jason-bourne-gg/plotting-society/internal/database"
 	"github.com/jason-bourne-gg/plotting-society/internal/domain"
 	"github.com/jason-bourne-gg/plotting-society/internal/httpx"
@@ -232,9 +233,14 @@ func (s *Store) SetStatus(ctx context.Context, queryID uuid.UUID, status string,
 
 // ------------------------------------------------------------------ handler
 
-type Handler struct{ store *Store }
+type Handler struct {
+	store *Store
+	guard *access.Guard
+}
 
-func NewHandler(store *Store) *Handler { return &Handler{store: store} }
+func NewHandler(store *Store, guard *access.Guard) *Handler {
+	return &Handler{store: store, guard: guard}
+}
 
 func (h *Handler) Routes(mux *http.ServeMux, a *auth.Authenticator) {
 	mux.Handle("POST /api/societies/{societyId}/queries", a.RequireAuth(httpx.Handler(h.create)))
@@ -348,6 +354,12 @@ func (h *Handler) listForSociety(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return httpx.BadRequest("Not a valid society id.")
 	}
+	// RequireStaff proves the caller is a builder, not that they are this one.
+	caller := auth.MustFromContext(r.Context())
+	if err := h.guard.Society(r.Context(), caller.Role, caller.BuilderID, societyID); err != nil {
+		return err
+	}
+
 	status := r.URL.Query().Get("status")
 	if status != "" && !domain.ValidQueryStatus(status) {
 		return httpx.BadRequest("Unknown status filter.")
@@ -377,7 +389,11 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	staff := identity.Role.IsStaff()
-	if !staff && q.RaisedBy != identity.UserID {
+	if staff {
+		if err := h.guard.Query(r.Context(), identity.Role, identity.BuilderID, queryID); err != nil {
+			return err
+		}
+	} else if q.RaisedBy != identity.UserID {
 		// Same body as a genuine miss, so ids cannot be probed.
 		return httpx.NotFound("That query does not exist.")
 	}
@@ -417,8 +433,15 @@ func (h *Handler) addMessage(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	staff := identity.Role.IsStaff()
-	if !staff && q.RaisedBy != identity.UserID {
+	if staff {
+		if err := h.guard.Query(r.Context(), identity.Role, identity.BuilderID, queryID); err != nil {
+			return err
+		}
+	} else if q.RaisedBy != identity.UserID {
 		return httpx.NotFound("That query does not exist.")
+	}
+	if !domain.SafeExternalURL(req.AttachmentURL) {
+		return httpx.Invalid(map[string]string{"attachmentUrl": "Attach an http or https link."})
 	}
 	// Only staff can leave an internal note; an owner marking one would
 	// silently hide their own message from themselves.
@@ -436,6 +459,10 @@ func (h *Handler) setStatus(w http.ResponseWriter, r *http.Request) error {
 	queryID, err := uuid.Parse(r.PathValue("queryId"))
 	if err != nil {
 		return httpx.BadRequest("Not a valid query id.")
+	}
+	caller := auth.MustFromContext(r.Context())
+	if err := h.guard.Query(r.Context(), caller.Role, caller.BuilderID, queryID); err != nil {
+		return err
 	}
 
 	var req struct {

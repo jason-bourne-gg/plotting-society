@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type SiteUpdate } from '../lib/api'
 import { useSociety } from '../lib/useSociety'
-import { shortDate, relative } from '../lib/format'
+import { shortDate, relative, safeUrl } from '../lib/format'
 import { Spinner, ErrorNote, Empty } from '../components/ui'
 
 export default function Updates() {
@@ -60,7 +60,7 @@ export default function Updates() {
                     {u.media.map((m) => (
                       <figure key={m.url} className="overflow-hidden rounded-xl bg-olive-100">
                         <img
-                          src={m.url}
+                          src={safeUrl(m.url) ?? ''}
                           alt={m.caption ?? u.title}
                           loading="lazy"
                           className="h-36 w-full object-cover transition hover:scale-105"
