@@ -40,8 +40,9 @@ type Rate struct {
 	// ReferenceAmount is the rate applied to ReferenceAreaSqft, precomputed so
 	// every client shows the same figure.
 	ReferenceAmount float64   `json:"referenceAmount"`
-	PlotCount       int       `json:"plotCount"`
-	BilledCount     int       `json:"billedCount"`
+	// Sold plots only — an unsold plot has nobody to bill.
+	PlotCount   int `json:"plotCount"`
+	BilledCount int `json:"billedCount"`
 	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
@@ -74,8 +75,11 @@ func (s *Store) List(ctx context.Context, societyID uuid.UUID) ([]Rate, float64,
 		       COALESCE(r.rate_per_sqft, $2::numeric) AS rate,
 		       COALESCE(r.id, '00000000-0000-0000-0000-000000000000'::uuid),
 		       COALESCE(r.updated_at, now()),
-		       count(*)::int AS plots,
-		       count(d.id)::int AS billed
+		       -- Only sold plots are billable, so counting every plot would
+		       -- report 823 "sold plots" against 515 bills and invent 308
+		       -- plots that are supposedly waiting to be invoiced.
+		       count(*) FILTER (WHERE p.status = 'sold')::int AS plots,
+		       count(d.id) FILTER (WHERE p.status = 'sold')::int AS billed
 		  FROM plots p
 		  LEFT JOIN maintenance_rates r
 		         ON r.society_id = p.society_id AND r.sector = p.phase
