@@ -5,7 +5,7 @@ still clear, where did the maintenance money go, when does the road get tarred �
 becomes a phone call to the builder's sales desk. This replaces that desk.
 
 Built against **Sandesh Nagari 7**: a real 823-plot, 58-acre NMRDA-sanctioned
-project in Nagpur.
+project at Rui & Banwadi, on the Wardha Road–MIHAN corridor, Nagpur.
 
 **[Live demo →](https://plotting-society.aniketcharjan3.workers.dev)**  ·  Go + Postgres + React  ·  runs at **₹0/month**
 
@@ -23,6 +23,11 @@ Sign in as `office@shivrudragroup.in` (builder) or `rohit.deshmukh@example.com`
 | **Guest** | The layout, what's available and at what price, site progress — and can leave an enquiry | **None** |
 | **Owner** | Their plot, dues, documents, the society ledger, their own query threads | Yes |
 | **Builder** | All of it, plus the admin portal | Yes |
+
+Owners never self-register: the site office adds the plot and invites the owner,
+and the invite binds that person to that plot on first sign-in. Auth is Argon2id
+with short-lived JWTs and single-use refresh tokens — no third-party auth, no
+per-user cost.
 
 Every guest enquiry lands in the builder's leads board with the plot they were
 looking at. That's the reason a builder shares the public link at all.
@@ -72,7 +77,8 @@ rather than a number that quietly changed.
 **The layout map carries no owner details.** Names and numbers appear only on a
 plot's own page, to that plot's owner and the builder.
 
-**A bill snapshots what it was computed from** — rate, area, sector. Changing a
+**A bill snapshots what it was computed from** — rate, area, sector. Maintenance
+is a one-time charge priced per square foot and set **per sector**, so changing a
 rate never re-prices an invoice already issued.
 
 ---
