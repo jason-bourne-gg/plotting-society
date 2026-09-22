@@ -20,6 +20,73 @@ sanctioned layout; ownership, dues, ledger figures and queries are demo data.
 
 ---
 
+<p align="center">
+  <a href="https://plotting-society.aniketcharjan3.workers.dev"><b>Live demo</b></a> ·
+  <a href="docs/GO-LIVE.md">Deploy it free</a> ·
+  <a href="docs/ARCHITECTURE.md">Architecture</a>
+</p>
+
+![Layout map](docs/screenshots/layout-map.png)
+
+---
+
+## What an owner sees
+
+The map is the centre of gravity: it is the one thing an owner 800 km away
+cannot get today without phoning the sales desk. Pick a sector, then tap a plot.
+Owner names and phone numbers are never on it.
+
+Their own plot carries the working, not just a total — `1,572 sq ft × ₹12.50/sq ft`
+— because a bare number invites the query that the page exists to prevent.
+
+| Their plot | Site progress |
+|---|---|
+| ![My plot](docs/screenshots/my-plot.png) | ![Site progress](docs/screenshots/site-progress.png) |
+
+The society fund is open to every owner, with spending broken down by head. It
+is append-only: a correction appears as its own reversal line, so a disputed
+figure can be answered with the history rather than a number that quietly
+changed.
+
+Queries carry a **visible deadline**. That clock is the whole point — it is what
+a WhatsApp group can never give you.
+
+| Society fund | Queries, with the SLA clock |
+|---|---|
+| ![Society fund](docs/screenshots/society-fund.png) | ![My queries](docs/screenshots/my-queries.png) |
+
+---
+
+## What the builder sees
+
+One screen for what needs attention: anything past its deadline, open queries,
+new leads, fund balance.
+
+![Builder dashboard](docs/screenshots/admin-dashboard.png)
+
+Every guest enquiry lands here with the plot they were looking at, their number,
+and one tap to call or WhatsApp. That is the commercial reason for a builder to
+share the public link at all.
+
+![Leads](docs/screenshots/admin-leads.png)
+
+Maintenance is a one-time charge priced per square foot, set **per sector**. The
+reference quote updates as you type, because a slipped decimal point would bill
+515 people the wrong amount.
+
+![Maintenance rates](docs/screenshots/admin-maintenance.png)
+
+---
+
+## Signing in
+
+Owners never self-register. The site office adds the plot, invites the owner,
+and the invite binds that person to that plot on first sign-in.
+
+![Sign in](docs/screenshots/login.png)
+
+---
+
 ## Three levels of access
 
 | | Who | Sees | Signs in? |
