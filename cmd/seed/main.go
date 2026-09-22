@@ -18,6 +18,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -159,6 +160,20 @@ func seed(ctx context.Context, db *database.DB, password string) error {
 	  {"label":"5 minutes","detail":"To Wardha Road / NH44"},
 	  {"label":"2 minutes","detail":"To the Samruddhi Mahamarg extension"}
 	]`
+	// Travel times as printed in the brochure.
+	landmarks := `[
+	  {"name":"Wardha Road / NH44","minutes":5},
+	  {"name":"Samruddhi Mahamarg extension","minutes":2},
+	  {"name":"AIIMS Nagpur","minutes":10},
+	  {"name":"IIM Nagpur","minutes":10},
+	  {"name":"MIHAN SEZ","minutes":10},
+	  {"name":"Nagpur Airport","minutes":15},
+	  {"name":"Suretech Hospital","minutes":10},
+	  {"name":"Achiever School","minutes":4},
+	  {"name":"VCA Cricket Stadium","minutes":15},
+	  {"name":"Le Meridien Hotel","minutes":10}
+	]`
+
 	amenities := `[
 	  "Club House","Swimming Pool","Open Gym","Multipurpose Court","Amphitheatre",
 	  "Badminton / Volleyball / Pickleball Court","Lawn","Cricket Pitch","Play Court",
@@ -173,13 +188,15 @@ func seed(ctx context.Context, db *database.DB, password string) error {
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO societies (builder_id, name, slug, city, address, rera_number,
 		                       layout_width, layout_height, tagline, highlights, amenities,
-		                       contact_phone, contact_email, public_listing)
+		                       contact_phone, contact_email, public_listing,
+		                       map_label, landmarks)
 		VALUES ($1, 'Sandesh Nagari 7', 'sandesh-nagari-7', 'Nagpur',
 		        'Rui & Banwadi, Wardha Road – MIHAN Corridor, Nagpur. Office: G1 Lalita Apartment, Behind Domino''s, Somalwada, Nagpur 440025',
 		        'PP1190002601297', 2400, 2200,
 		        'The address that Nagpur is heading towards.',
-		        $2::jsonb, $3::jsonb, '+91 91560 00007', 'sales@shivrudragroup.in', true)
-		RETURNING id`, builderID, highlights, amenities).Scan(&societyID); err != nil {
+		        $2::jsonb, $3::jsonb, '+91 91560 00007', 'sales@shivrudragroup.in', true,
+		        'Sandesh Nagari 7, Rui & Banwadi', $4::jsonb)
+		RETURNING id`, builderID, highlights, amenities, landmarks).Scan(&societyID); err != nil {
 		return fmt.Errorf("society: %w", err)
 	}
 
@@ -222,6 +239,32 @@ func seed(ctx context.Context, db *database.DB, password string) error {
 	soldPlots := make([]uuid.UUID, 0, 512)
 	plotIDByNo := map[int]uuid.UUID{}
 
+	// Insert in batches rather than one statement per plot.
+	//
+	// 823 round trips inside a single transaction, across the internet and
+	// through a connection pooler, is slow and brittle — it died partway with
+	// "unexpected EOF" holding a server connection the whole time. Ids are
+	// generated here instead of returned so the batch needs no RETURNING and
+	// the caller still knows which plot is which.
+	const batchSize = 150
+	var (
+		args     []any
+		values   []string
+		pending  int
+		rowIndex int
+	)
+
+	flush := func() error {
+		if pending == 0 {
+			return nil
+		}
+		_, err := tx.Exec(ctx,
+			`INSERT INTO plots (id, society_id, plot_no, phase, area_sqft, facing, is_corner, status, price, map_shape)
+			 VALUES `+strings.Join(values, ","), args...)
+		args, values, pending = args[:0], values[:0], 0
+		return err
+	}
+
 	for _, sec := range sectors {
 		for no := sec.first; no <= sec.last; no++ {
 			idx := no - sec.first
@@ -235,26 +278,35 @@ func seed(ctx context.Context, db *database.DB, password string) error {
 				x, y, x+cellW, y, x+cellW, y+cellH, x, y+cellH, sec.number, sec.colour)
 
 			area := plotAreas[rng.Intn(len(plotAreas))]
-			// ₹2,400–3,000 per sq ft is the going rate on this corridor.
 			price := area * float64(2400+rng.Intn(600))
 			status := pickStatus()
 			corner := col == 0 || col == sec.cols-1
 
-			var plotID uuid.UUID
-			if err := tx.QueryRow(ctx, `
-				INSERT INTO plots (society_id, plot_no, phase, area_sqft, facing, is_corner, status, price, map_shape)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
-				RETURNING id`,
-				societyID, fmt.Sprintf("%d", no), sec.name, area,
-				[]string{"East", "West", "North", "South"}[rng.Intn(4)],
-				corner, status, price, shape).Scan(&plotID); err != nil {
-				return fmt.Errorf("plot %d: %w", no, err)
-			}
-			plotIDByNo[no] = plotID
+			id := uuid.New()
+			plotIDByNo[no] = id
 			if status == "sold" {
-				soldPlots = append(soldPlots, plotID)
+				soldPlots = append(soldPlots, id)
+			}
+
+			base := rowIndex * 10
+			values = append(values, fmt.Sprintf(
+				"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d::jsonb)",
+				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10))
+			args = append(args, id, societyID, fmt.Sprintf("%d", no), sec.name, area,
+				[]string{"East", "West", "North", "South"}[rng.Intn(4)], corner, status, price, shape)
+			pending++
+			rowIndex++
+
+			if pending >= batchSize {
+				if err := flush(); err != nil {
+					return fmt.Errorf("insert plots: %w", err)
+				}
+				rowIndex = 0
 			}
 		}
+	}
+	if err := flush(); err != nil {
+		return fmt.Errorf("insert plots: %w", err)
 	}
 
 	// Two owner logins on real sold plots, so the owner-side views have content.
@@ -326,6 +378,23 @@ func seed(ctx context.Context, db *database.DB, password string) error {
 		return err
 	}
 
+	// Batched for the same reason the plots are.
+	dueArgs := make([]any, 0, batchSize*8)
+	dueVals := make([]string, 0, batchSize)
+	dueIdx := 0
+
+	flushDues := func() error {
+		if len(dueVals) == 0 {
+			return nil
+		}
+		_, err := tx.Exec(ctx,
+			`INSERT INTO maintenance_dues (plot_id, period_label, amount_due, amount_paid,
+			                               due_date, paid_on, rate_per_sqft, area_sqft, sector)
+			 VALUES `+strings.Join(dueVals, ","), dueArgs...)
+		dueArgs, dueVals, dueIdx = dueArgs[:0], dueVals[:0], 0
+		return err
+	}
+
 	for i, b := range bills {
 		rate, ok := sectorRates[b.sector]
 		if !ok {
@@ -333,12 +402,11 @@ func seed(ctx context.Context, db *database.DB, password string) error {
 		}
 		amount := math.Round(b.area*rate*100) / 100
 
-		// Deterministic 80/20 split rather than a random one, so the totals in
-		// the ledger below always match what is actually on the plots.
-		paidInFull := i%5 != 0
+		// Deterministic 80/20 split rather than a random one, so the ledger
+		// below always reconciles against what is actually on the plots.
 		amountPaid := 0.0
 		var paidOn any
-		if paidInFull {
+		if i%5 != 0 {
 			amountPaid = amount
 			paidOn = time.Now().AddDate(0, 0, -(30 + rng.Intn(300)))
 			collected += amount
@@ -347,16 +415,23 @@ func seed(ctx context.Context, db *database.DB, password string) error {
 			outstanding += amount
 		}
 
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO maintenance_dues (plot_id, period_label, amount_due, amount_paid,
-			                              due_date, paid_on, rate_per_sqft, area_sqft, sector)
-			VALUES ($1, 'One-time maintenance', $2, $3, $4, $5, $6, $7, $8)`,
-			b.plotID, amount, amountPaid,
-			time.Now().AddDate(0, 0, -400), paidOn,
-			rate, b.area, b.sector); err != nil {
-			return fmt.Errorf("dues for plot %s: %w", b.plotID, err)
-		}
+		base := dueIdx * 8
+		dueVals = append(dueVals, fmt.Sprintf(
+			"($%d,'One-time maintenance',$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8))
+		dueArgs = append(dueArgs, b.plotID, amount, amountPaid,
+			time.Now().AddDate(0, 0, -400), paidOn, rate, b.area, b.sector)
+		dueIdx++
 		billed++
+
+		if dueIdx >= batchSize {
+			if err := flushDues(); err != nil {
+				return fmt.Errorf("insert dues: %w", err)
+			}
+		}
+	}
+	if err := flushDues(); err != nil {
+		return fmt.Errorf("insert dues: %w", err)
 	}
 
 	// The society fund is maintenance money collected from owners — security,

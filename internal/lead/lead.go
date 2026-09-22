@@ -64,6 +64,14 @@ type PublicSociety struct {
 	BrochureURL string    `json:"brochureUrl,omitempty"`
 	Phone       string    `json:"contactPhone,omitempty"`
 	Email       string    `json:"contactEmail,omitempty"`
+
+	// Where the land is. Latitude and longitude are pointers because they are
+	// null until the site office confirms them: a pin in roughly the right
+	// district is worse than no pin, since it looks authoritative.
+	Latitude  *float64        `json:"latitude,omitempty"`
+	Longitude *float64        `json:"longitude,omitempty"`
+	MapLabel  string          `json:"mapLabel,omitempty"`
+	Landmarks json.RawMessage `json:"landmarks,omitempty"`
 }
 
 type Store struct{ db *database.DB }
@@ -76,11 +84,13 @@ func (s *Store) PublicBySlug(ctx context.Context, slug string) (PublicSociety, e
 		SELECT s.id, s.name, s.slug, COALESCE(b.name,''), COALESCE(s.city,''),
 		       COALESCE(s.address,''), COALESCE(s.rera_number,''), COALESCE(s.tagline,''),
 		       s.highlights, s.amenities, COALESCE(s.brochure_url,''),
-		       COALESCE(s.contact_phone, b.phone, ''), COALESCE(s.contact_email, b.email, '')
+		       COALESCE(s.contact_phone, b.phone, ''), COALESCE(s.contact_email, b.email, ''),
+		       s.latitude, s.longitude, COALESCE(s.map_label,''), s.landmarks
 		  FROM societies s JOIN builders b ON b.id = s.builder_id
 		 WHERE s.slug = $1 AND s.public_listing = true`, slug,
 	).Scan(&p.ID, &p.Name, &p.Slug, &p.BuilderName, &p.City, &p.Address, &p.RERANumber,
-		&p.Tagline, &p.Highlights, &p.Amenities, &p.BrochureURL, &p.Phone, &p.Email)
+		&p.Tagline, &p.Highlights, &p.Amenities, &p.BrochureURL, &p.Phone, &p.Email,
+		&p.Latitude, &p.Longitude, &p.MapLabel, &p.Landmarks)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PublicSociety{}, ErrNotFound
 	}

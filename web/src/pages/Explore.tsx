@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, ApiFailure, type Plot, type SiteUpdate, type Summary } from '../lib/api'
-import { inr, sqft, PLOT_STATUS } from '../lib/format'
+import { inr, sqft } from '../lib/format'
 import { Spinner, ErrorNote, Field } from '../components/ui'
+import PlotMap, { MapLegend, SECTORS } from '../components/PlotMap'
+import LocationCard from '../components/LocationCard'
 
 type PublicSociety = {
   id: string
@@ -18,14 +20,11 @@ type PublicSociety = {
   brochureUrl?: string
   contactPhone?: string
   contactEmail?: string
+  latitude?: number
+  longitude?: number
+  mapLabel?: string
+  landmarks?: { name: string; minutes: number }[]
 }
-
-const SECTORS = [
-  { n: 1, label: 'Sector 01', range: '1 – 302', colour: '#E8913A' },
-  { n: 2, label: 'Sector 02', range: '303 – 364', colour: '#4FA3DC' },
-  { n: 3, label: 'Sector 03', range: '365 – 517', colour: '#57A55B' },
-  { n: 4, label: 'Sector 04', range: '518 – 823', colour: '#8B7EC8' },
-]
 
 /**
  * The guest view. No account, no token — anyone with the link lands here.
@@ -40,7 +39,9 @@ export default function Explore() {
   const [error, setError] = useState('')
   const [selected, setSelected] = useState<Plot | null>(null)
   const [onlyAvailable, setOnlyAvailable] = useState(true)
-  const [sectorFilter, setSectorFilter] = useState<number | 'all'>('all')
+  // Open on a sector rather than the whole layout: 823 numbered cells at
+  // once is a wall, and Sector 01 is the one with the most on offer.
+  const [sectorFilter, setSectorFilter] = useState<number | 'all'>(1)
 
   useEffect(() => {
     api
@@ -58,28 +59,6 @@ export default function Explore() {
       })
       .catch(() => setError('Could not load the project right now.'))
   }, [])
-
-  const visible = useMemo(
-    () =>
-      plots.filter((p) => {
-        if (onlyAvailable && p.status !== 'available') return false
-        if (sectorFilter !== 'all' && p.mapShape?.sector !== sectorFilter) return false
-        return true
-      }),
-    [plots, onlyAvailable, sectorFilter],
-  )
-
-  const bounds = useMemo(() => {
-    let maxX = 0
-    let maxY = 0
-    for (const p of plots) {
-      for (const [x, y] of p.mapShape?.points ?? []) {
-        if (x > maxX) maxX = x
-        if (y > maxY) maxY = y
-      }
-    }
-    return { w: maxX + 80, h: maxY + 80 }
-  }, [plots])
 
   if (error) return <div className="mx-auto max-w-lg p-8"><ErrorNote message={error} /></div>
   if (!society || !summary) return <div className="grid min-h-screen place-items-center"><Spinner label="Loading the project" /></div>
@@ -119,6 +98,9 @@ export default function Explore() {
               <div className="mt-8 flex flex-wrap gap-3">
                 <a href="#layout" className="btn-gold">
                   See available plots
+                </a>
+                <a href="#location" className="btn-ghost border-white/30 bg-white/10 text-white hover:bg-white/20">
+                  Where it is
                 </a>
                 <a href="#enquire" className="btn-ghost border-white/30 bg-white/10 text-white hover:bg-white/20">
                   Talk to the site office
@@ -186,55 +168,17 @@ export default function Explore() {
             </div>
           </div>
 
-          <div className="card overflow-hidden p-0">
-            <div className="max-h-[65vh] overflow-auto p-4">
-              <svg viewBox={`0 0 ${bounds.w} ${bounds.h}`} className="h-auto w-full min-w-[900px]">
-                {SECTORS.map((s) => {
-                  const first = plots.find((p) => p.mapShape?.sector === s.n)
-                  if (!first?.mapShape) return null
-                  const y = Math.min(...first.mapShape.points.map(([, py]) => py))
-                  return (
-                    <text key={s.n} x={60} y={y - 14} fontSize="22" fontWeight="600" fill={s.colour}>
-                      {s.label} · plots {s.range}
-                    </text>
-                  )
-                })}
-                {plots.map((p) => {
-                  const shape = p.mapShape
-                  if (!shape?.points?.length) return null
-                  const dimmed = !visible.includes(p)
-                  const meta = PLOT_STATUS[p.status]
-                  const [x0, y0] = shape.points[0]!
-                  const [x2, y2] = shape.points[2]!
-                  return (
-                    <g
-                      key={p.id}
-                      className={p.status === 'available' ? 'cursor-pointer' : ''}
-                      opacity={dimmed ? 0.1 : 1}
-                      onClick={() => p.status === 'available' && setSelected(p)}
-                    >
-                      <polygon
-                        points={shape.points.map(([x, y]) => `${x},${y}`).join(' ')}
-                        fill={meta?.dot ?? '#999'}
-                        fillOpacity={p.status === 'available' ? 0.38 : 0.16}
-                        stroke={meta?.dot ?? '#999'}
-                        strokeWidth={selected?.id === p.id ? 3.5 : 1.2}
-                      />
-                      <text
-                        x={(x0 + x2) / 2}
-                        y={(y0 + y2) / 2 + 5}
-                        textAnchor="middle"
-                        fontSize="17"
-                        fontWeight="600"
-                        fill="#374327"
-                      >
-                        {p.plotNo}
-                      </text>
-                    </g>
-                  )
-                })}
-              </svg>
-            </div>
+          <PlotMap
+            plots={plots}
+            sector={sectorFilter === 'all' ? null : sectorFilter}
+            statusFilter={onlyAvailable ? 'available' : 'all'}
+            search=""
+            pickableOnly="available"
+            onPick={setSelected}
+          />
+
+          <div className="mt-3">
+            <MapLegend compact />
           </div>
 
           {selected && (
@@ -296,6 +240,16 @@ export default function Explore() {
             </div>
           </section>
         )}
+
+        <LocationCard
+          name={society.name}
+          address={society.address}
+          city={society.city}
+          latitude={society.latitude}
+          longitude={society.longitude}
+          mapLabel={society.mapLabel}
+          landmarks={society.landmarks}
+        />
 
         <EnquiryForm society={society} plot={selected} />
       </main>
