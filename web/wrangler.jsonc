@@ -15,6 +15,12 @@
     // that does not exist and gets a 404. "single-page-application" serves
     // index.html instead and lets the router take over, while real files under
     // /assets are still matched first.
+    //
+    // This replaces a `/* /index.html 200` line in public/_redirects, which
+    // Workers rejects outright: the wildcard matches /index.html itself, so
+    // the rule redirects to its own target and the deploy fails with
+    // "Infinite loop detected in this rule". Pages tolerates that file; Workers
+    // does not, and this setting is the Workers way to say the same thing.
     "not_found_handling": "single-page-application"
   },
 

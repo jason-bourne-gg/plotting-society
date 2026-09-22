@@ -176,6 +176,12 @@ what the dashboard gives you by default.
 runs any code of ours. `not_found_handling: "single-page-application"` is what
 makes `/my-plot` survive a refresh.
 
+There is deliberately no `public/_redirects`. The usual SPA line in it,
+`/* /index.html 200`, makes a Workers deploy fail with *"Infinite loop detected
+in this rule"* — the wildcard matches `/index.html` itself, so the rule
+redirects to its own target. Pages accepts that file; Workers does not.
+Switching to Pages later means adding it back.
+
 In the Worker's **Settings → Build**:
 
 | Field | Value |
@@ -195,6 +201,21 @@ Then **Settings → Domains & Routes → enable the `workers.dev` URL**, which i
 off by default on a new Worker. That is what "No URLs enabled" means.
 
 If you would rather use Pages: Workers & Pages → Create → **Pages** tab →
-Connect to Git, root directory `web`, build `npm run build`, output `dist`.
-`web/public/_redirects` handles the routing there instead, and `wrangler.jsonc`
-is simply ignored.
+Connect to Git, root directory `web`, build `npm run build`, output `dist`. Add
+back a `web/public/_redirects` containing `/*  /index.html  200` for the client
+routing; `wrangler.jsonc` is then ignored.
+
+### Deploying by hand
+
+Auto-deploy needs the Git connection to be live — Settings → Builds will say so
+in a banner if it is not. To deploy without it:
+
+```bash
+cd web
+npm run build
+CLOUDFLARE_API_TOKEN=... npx wrangler deploy
+```
+
+An **"Edit Cloudflare Workers"** API token is enough. On a machine behind a
+corporate proxy prefer this to `wrangler login`, whose OAuth callback loses its
+session cookie through the proxy and fails with `request_forbidden`.
