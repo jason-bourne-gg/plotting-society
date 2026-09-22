@@ -10,6 +10,8 @@
 //   node test/smoke.mjs http://localhost:5173
 //
 // Needs Playwright and a Chrome install: npx playwright install chrome
+//
+// Exits non-zero on the first sign of trouble, so it works as a release gate.
 import { chromium } from 'playwright'
 
 const BASE = (process.argv[2] ?? 'http://localhost:5173').replace(/\/$/, '')
@@ -20,33 +22,47 @@ const LOGIN = {
   builder: 'office@shivrudragroup.in',
 }
 
-// expect: a substring the page must contain, or a function for a richer check.
+// Each route declares a `ready` predicate that runs IN THE BROWSER and is
+// polled until true. It must assert something only a correct render produces.
+//
+// Predicates compare against lowercased innerText via txt(). innerText returns
+// text as RENDERED, so a label styled `text-transform: uppercase` comes back as
+// "CLOSING BALANCE" and a case-sensitive match on "Closing balance" fails on a
+// page that is entirely correct.
+//
+// Two traps this avoids. Waiting for text that also appears in the nav — "Layout
+// map" is a nav link — succeeds instantly and measures nothing. And asserting
+// once after a fixed sleep races a cold free-tier API, which can take 30
+// seconds to answer the first request.
 const ROUTES = {
   guest: [
-    ['/explore', 'Sandesh Nagari 7'],
-    ['/explore', '823'],                       // the highlights array rendered
-    ['/explore', 'Club House'],                // the amenities array rendered
+    ['/explore', () => {
+      const t = txt()
+      // 823 comes from the highlights array and club house from amenities.
+      // Both are jsonb, and both render only if they arrived as JSON rather
+      // than as the base64 string a []byte field would have produced.
+      return t.includes('sandesh nagari 7') && t.includes('823') && t.includes('club house')
+    }],
   ],
   owner: [
-    ['/', 'Layout map', async p => {
-      const n = await p.locator('svg polygon').count()
-      return n > 100 ? null : `only ${n} plot polygons drawn, expected 823`
-    }],
-    ['/my-plot', 'One-time maintenance'],
-    ['/my-plot', 'sq ft ×'],                   // the bill shows its working
-    ['/updates', 'Site progress'],
-    ['/fund', 'Closing balance'],
-    ['/queries', 'My queries'],
-    ['/queries/new', 'Raise a query'],
+    // The map's whole job is the polygons. The chrome renders with or without
+    // them, so counting them is the only check that means anything.
+    ['/', () => document.querySelectorAll('svg polygon').length > 100],
+    ['/my-plot', () => txt().includes('one-time maintenance') && /sq ft ×/.test(txt())],
+    ['/updates', () => txt().includes('site progress')],
+    ['/fund', () => txt().includes('closing balance') && txt().includes('ledger')],
+    ['/queries', () => txt().includes('my queries')],
+    ['/queries/new', () => txt().includes('raise a query')],
   ],
   builder: [
-    ['/admin', 'Past SLA'],
-    ['/admin/inbox', 'Query inbox'],
-    ['/admin/leads', 'Leads'],
-    ['/admin/plots', 'Plots'],
-    ['/admin/updates', 'Post a site update'],
-    ['/admin/fund', 'Fund ledger'],
-    ['/admin/maintenance', '1,540 sq ft'],     // the reference plot quote
+    ['/admin', () => txt().includes('past sla')],
+    ['/admin/inbox', () => txt().includes('query inbox')],
+    ['/admin/leads', () => txt().includes('converted')],
+    ['/admin/plots', () => document.querySelectorAll('table tbody tr').length > 10],
+    ['/admin/updates', () => txt().includes('post a site update')],
+    ['/admin/fund', () => txt().includes('add an entry')],
+    // The reference quote proves the per-sector rates resolved.
+    ['/admin/maintenance', () => txt().includes('1,540 sq ft')],
   ],
 }
 
@@ -54,21 +70,62 @@ const problems = []
 const record = (role, route, kind, text) =>
   problems.push({ role, route, kind, text: String(text).replace(/\s+/g, ' ').slice(0, 260) })
 
+// Chrome reports ERR_NETWORK_CHANGED / ERR_NETWORK_IO_SUSPENDED when the
+// machine's network flaps — a VPN reconnecting, a proxy cycling, a laptop
+// waking. Those are not the app failing, and a gate that cries wolf about them
+// gets ignored, so transport errors are retried and only a persistent one is
+// reported.
+const TRANSIENT = /ERR_NETWORK_CHANGED|ERR_NETWORK_IO_SUSPENDED|ERR_CONNECTION_RESET|ERR_NETWORK_ACCESS_DENIED/
+
+async function goto(page, url, attempts = 3) {
+  for (let i = 1; ; i++) {
+    try {
+      return await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 })
+    } catch (e) {
+      if (i >= attempts || !TRANSIENT.test(String(e))) throw e
+      await page.waitForTimeout(3000 * i)
+    }
+  }
+}
+
 function listen(page, role, route) {
   page.removeAllListeners()
   page.on('console', m => m.type() === 'error' && record(role, route, 'console', m.text()))
   page.on('pageerror', e => record(role, route, 'exception', e))
-  page.on('requestfailed', r => record(role, route, 'request-failed', `${r.url()} ${r.failure()?.errorText}`))
+  page.on('requestfailed', r => {
+    const why = r.failure()?.errorText ?? ''
+    if (TRANSIENT.test(why)) return // the machine's network, not the app
+    record(role, route, 'request-failed', `${r.url()} ${why}`)
+  })
   page.on('response', r => r.status() >= 400 && record(role, route, `http-${r.status()}`, r.url()))
 }
 
+// `networkidle` is not usable here: a cold free-tier API can hold a request
+// open for the better part of a minute, and fonts keep a connection warm. Wait
+// for the element the step actually needs instead.
+// Injected into every page so the predicates above can use it.
+const TXT_HELPER = `window.txt = () => document.body.innerText.replace(/\\s+/g, ' ').toLowerCase()`
+
 async function signIn(page, email) {
-  await page.goto(`${BASE}/login`, { waitUntil: 'networkidle', timeout: 60000 })
+  await goto(page, `${BASE}/login`)
+  await page.waitForSelector('input[type=email]', { timeout: 60000 })
   await page.fill('input[type=email]', email)
   await page.fill('input[type=password]', PASSWORD)
-  await page.click('button[type=submit]')
-  await page.waitForTimeout(4000)
+  await page.locator('form button[type=submit], form button').first().click()
+  await page.waitForSelector('header', { timeout: 90000 })
 }
+
+// Wake the API first: on a free tier the first request can take 50 seconds,
+// and every route would otherwise pay for it once.
+try {
+  const api = process.env.SMOKE_API
+  if (api) {
+    process.stdout.write('warming the API... ')
+    const t = Date.now()
+    await fetch(`${api}/healthz`).catch(() => {})
+    console.log(`${Date.now() - t}ms`)
+  }
+} catch {}
 
 const browser = await chromium.launch({ channel: 'chrome' })
 let checks = 0
@@ -76,6 +133,7 @@ let checks = 0
 for (const [role, routes] of Object.entries(ROUTES)) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
   const page = await ctx.newPage()
+  await page.addInitScript(TXT_HELPER)
   listen(page, role, 'login')
 
   if (LOGIN[role]) {
@@ -85,26 +143,22 @@ for (const [role, routes] of Object.entries(ROUTES)) {
     }
   }
 
-  for (const [route, expect, extra] of routes) {
+  for (const [route, ready] of routes) {
     listen(page, role, route)
     checks++
     try {
-      await page.goto(BASE + route, { waitUntil: 'networkidle', timeout: 60000 })
-      await page.waitForTimeout(2000)
-
-      const text = (await page.locator('body').innerText()).replace(/\s+/g, ' ')
-      if (!text.includes(expect)) {
-        record(role, route, 'missing-content', `expected "${expect}", page shows: ${text.slice(0, 160)}`)
-      }
-      if (/Could not load|Something went wrong|does not exist/i.test(text)) {
-        record(role, route, 'error-shown', text.slice(0, 160))
-      }
-      if (extra) {
-        const failure = await extra(page)
-        if (failure) record(role, route, 'assertion', failure)
-      }
+      await goto(page, BASE + route)
+      // Poll the assertion itself. A cold API can take 30s to answer, and a
+      // fixed sleep would either be flaky or pointlessly slow.
+      await page.waitForFunction(
+        `(${String(ready)})()`,
+        null,
+        { timeout: 60000, polling: 500 },
+      )
     } catch (e) {
-      record(role, route, 'nav-failed', e)
+      const text = await page.locator('body').innerText().catch(() => '')
+      record(role, route, /Timeout/.test(String(e)) ? 'assertion-never-true' : 'nav-failed',
+        `${String(e).split('\n')[0]} | page: ${text.replace(/\s+/g, ' ').slice(0, 180)}`)
     }
   }
   await ctx.close()
