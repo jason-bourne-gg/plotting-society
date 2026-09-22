@@ -8,6 +8,21 @@
 
 const REFRESH_KEY = 'ps.refresh'
 
+/**
+ * Where the API lives.
+ *
+ * Empty in development: Vite proxies /api to localhost:8080, so the browser
+ * stays on one origin and CORS never comes into it. In production the UI is on
+ * Pages and the API is on Render — different origins — so every request needs
+ * this prefix, and this exact value must also appear in the server's
+ * CORS_ORIGINS or the browser will block the response.
+ */
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
+
+function apiURL(path: string): string {
+  return API_BASE + path
+}
+
 export type ApiError = {
   code: string
   message: string
@@ -57,7 +72,7 @@ export async function refreshSession(): Promise<boolean> {
     const token = storedRefreshToken()
     if (!token) return false
     try {
-      const res = await fetch('/api/auth/refresh', {
+      const res = await fetch(apiURL('/api/auth/refresh'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken: token }),
@@ -86,7 +101,7 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
   }
   if (accessToken) headers.set('authorization', `Bearer ${accessToken}`)
 
-  const res = await fetch(path, { ...init, headers })
+  const res = await fetch(apiURL(path), { ...init, headers })
 
   if (res.status === 401 && retry && storedRefreshToken()) {
     if (await refreshSession()) return request<T>(path, init, false)

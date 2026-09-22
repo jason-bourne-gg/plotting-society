@@ -71,10 +71,15 @@ Four direct Go dependencies: `pgx`, `golang-jwt`, `uuid`, `x/crypto`. S3 request
 signing is written against the standard library rather than pulling in the AWS
 SDK — about 100 lines, and it removes three dependencies.
 
-**Cost to run: ₹0/month.** Cloud Run's always-free tier for the API, Supabase
-Postgres, Cloudflare R2 for photos, Cloudflare Pages for the front end. Go is
-what makes that fit: Cloud Run bills CPU-seconds, and a Go handler returns in
-single-digit milliseconds. See [`docs/DEPLOY.md`](docs/DEPLOY.md).
+**Cost to run: ₹0/month, with no credit card anywhere** — Supabase Postgres and
+Storage, the Go binary on Render, the front end on Cloudflare Pages. Go is what
+makes that fit: a 15 MB image that answers in single-digit milliseconds sits
+inside free allowances that a Node or JVM service would spill out of.
+
+**[`docs/GO-LIVE.md`](docs/GO-LIVE.md)** is the step-by-step for that stack.
+[`docs/DEPLOY.md`](docs/DEPLOY.md) covers the faster Google Cloud Run path,
+which wants a card on file even at ₹0, and what to move to once a builder
+signs.
 
 ---
 

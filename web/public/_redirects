@@ -1,0 +1,7 @@
+# Cloudflare Pages: client-side routing.
+#
+# The router owns /my-plot, /queries/:id and the rest. Without this, a refresh
+# or a shared link on any of those paths asks Pages for a file that does not
+# exist and gets a 404. 200 rewrites them to the app shell so the router can
+# take over. Real files (/assets/*) are served before this rule is consulted.
+/*    /index.html   200
