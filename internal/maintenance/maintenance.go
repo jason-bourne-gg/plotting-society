@@ -71,7 +71,7 @@ func (s *Store) List(ctx context.Context, societyID uuid.UUID) ([]Rate, float64,
 
 	rows, err := s.db.Query(ctx, `
 		SELECT p.phase,
-		       COALESCE(r.rate_per_sqft, $2) AS rate,
+		       COALESCE(r.rate_per_sqft, $2::numeric) AS rate,
 		       COALESCE(r.id, '00000000-0000-0000-0000-000000000000'::uuid),
 		       COALESCE(r.updated_at, now()),
 		       count(*)::int AS plots,

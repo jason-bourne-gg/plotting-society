@@ -49,22 +49,33 @@ func Connect(ctx context.Context, url string) (*DB, error) {
 	// "prepared statement ... already exists" (SQLSTATE 42P05) the moment a
 	// connection is reused.
 	//
-	// QueryExecModeDescribeExec keeps the extended protocol but with unnamed
-	// statements: it asks the server to describe the statement, then executes
-	// it, holding nothing across transactions. That is safe behind a pooler and
-	// keeps the server's parameter type inference, which matters here — queries
-	// use `= ANY($1)` over a uuid array and pass booleans straight into a
-	// predicate, and neither survives the client having to guess the types.
+	// QueryExecModeExec: one round trip, nothing held between statements.
 	//
-	// It is not QueryExecModeExec: that skips the describe, and pgx's guesses
-	// are not good enough for those two patterns. It is not CacheDescribe
-	// either, whose cached descriptions go stale the moment a migration
-	// changes a column. The cost here is one extra round trip per query.
+	// This is the only mode that survives a connection pooler in transaction
+	// mode, which is what production runs on — both Supabase and Neon hand you
+	// that URL by default on a free tier.
+	//
+	// The two modes that look reasonable are not:
+	//
+	//   CacheStatement caches named prepared statements, so the pool fails with
+	//   "prepared statement already exists" (42P05) the moment a connection is
+	//   reused.
+	//
+	//   DescribeExec sends Parse+Describe, then Bind+Execute — two round trips,
+	//   which the pooler sees as two transactions. Between them it can hand the
+	//   connection to another client, and the unnamed statement is gone. That
+	//   fails only under concurrency, so it passes every sequential test and
+	//   then 500s as soon as a real page loads three requests at once.
+	//
+	// Exec sends everything in one round trip. The cost is that pgx must infer
+	// parameter types itself rather than asking the server, so any parameter
+	// whose type is not obvious from context carries an explicit ::cast in the
+	// SQL. That is why those casts exist; do not remove them.
 	//
 	// An explicit default_query_exec_mode in the connection string wins, since
 	// ParseConfig has already applied it by this point.
 	if !strings.Contains(url, "default_query_exec_mode") {
-		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
 	}
 	cfg.ConnConfig.StatementCacheCapacity = 0
 	cfg.ConnConfig.DescriptionCacheCapacity = 0

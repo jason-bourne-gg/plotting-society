@@ -174,7 +174,7 @@ func (s *Store) Messages(ctx context.Context, queryID uuid.UUID, includeInternal
 		       COALESCE(m.attachment_url,''), m.is_internal, m.created_at
 		  FROM query_messages m
 		  LEFT JOIN users u ON u.id = m.author_id
-		 WHERE m.query_id = $1 AND ($2 OR m.is_internal = false)
+		 WHERE m.query_id = $1 AND ($2::boolean OR m.is_internal = false)
 		 ORDER BY m.created_at`, queryID, includeInternal)
 	if err != nil {
 		return nil, err

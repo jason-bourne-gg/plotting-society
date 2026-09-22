@@ -47,7 +47,7 @@ func (s *Store) List(ctx context.Context, societyID uuid.UUID, includeDrafts boo
 		       u.published_at, COALESCE(a.name,''), u.created_at
 		  FROM site_updates u
 		  LEFT JOIN users a ON a.id = u.created_by
-		 WHERE u.society_id = $1 AND ($2 OR u.published_at IS NOT NULL)
+		 WHERE u.society_id = $1 AND ($2::boolean OR u.published_at IS NOT NULL)
 		 ORDER BY COALESCE(u.published_at, u.created_at) DESC
 		 LIMIT $3`, societyID, includeDrafts, limit)
 	if err != nil {
@@ -76,14 +76,21 @@ func (s *Store) List(ctx context.Context, societyID uuid.UUID, includeDrafts boo
 	}
 
 	// One follow-up query for all media, rather than one per post.
-	ids := make([]uuid.UUID, 0, len(posts))
+	// The ids go as []string with an explicit ::uuid[] cast, not as
+	// []uuid.UUID. Under QueryExecModeExec — which a transaction-mode pooler
+	// forces on us, see internal/database — pgx infers parameter types itself
+	// instead of asking the server, and it has no encode plan for a uuid slice:
+	// "unable to encode []uuid.UUID ... for unknown type (OID 0)". The cast
+	// alone would not fix it, because the failure is client-side encoding,
+	// before any SQL is sent.
+	ids := make([]string, 0, len(posts))
 	for id := range byID {
-		ids = append(ids, id)
+		ids = append(ids, id.String())
 	}
 	mediaRows, err := s.db.Query(ctx, `
 		SELECT update_id, url, COALESCE(caption,'')
 		  FROM site_update_media
-		 WHERE update_id = ANY($1)
+		 WHERE update_id = ANY($1::uuid[])
 		 ORDER BY sort_order, created_at`, ids)
 	if err != nil {
 		return nil, err

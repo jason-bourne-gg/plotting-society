@@ -125,8 +125,11 @@ func TestConnectDisablesPreparedStatementCaching(t *testing.T) {
 	defer db.Close()
 
 	cfg := db.Config().ConnConfig
-	if cfg.DefaultQueryExecMode != pgx.QueryExecModeDescribeExec {
-		t.Errorf("DefaultQueryExecMode = %v, want QueryExecModeDescribeExec: pooler-safe, and it keeps the server's parameter type inference",
+	// DescribeExec is NOT acceptable here: its two round trips let a
+	// transaction-mode pooler swap the connection in between, which fails only
+	// under concurrency.
+	if cfg.DefaultQueryExecMode != pgx.QueryExecModeExec {
+		t.Errorf("DefaultQueryExecMode = %v, want QueryExecModeExec — the only mode that holds nothing between statements",
 			cfg.DefaultQueryExecMode)
 	}
 	if cfg.StatementCacheCapacity != 0 {

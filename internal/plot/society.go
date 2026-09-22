@@ -38,7 +38,7 @@ func (s *Store) Societies(ctx context.Context, role domain.Role, builderID *uuid
 	rows, err := s.db.Query(ctx, `
 		SELECT `+societyColumns+`
 		  FROM societies s JOIN builders b ON b.id = s.builder_id
-		 WHERE $1 = true
+		 WHERE $1::boolean = true
 		    OR ($2::uuid IS NOT NULL AND s.builder_id = $2)
 		    OR EXISTS (SELECT 1 FROM plots p WHERE p.society_id = s.id AND p.owner_id = $3)
 		 ORDER BY s.name`,
