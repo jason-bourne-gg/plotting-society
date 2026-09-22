@@ -18,6 +18,18 @@ services:
     region: singapore          # the closest Render region to India
     healthCheckPath: /healthz
     autoDeploy: true
+
+    # Only redeploy when something the API is built from actually changes.
+    # Without this, a front-end or docs commit rebuilds the same Go binary and,
+    # on the free plan, takes the service down for a minute to do it.
+    buildFilter:
+      ignoredPaths:
+        - web/**
+        - docs/**
+        - README.md
+        - LICENSE
+        - test/**
+        - "**/*_test.go"
     envVars:
       - key: APP_ENV
         value: production
