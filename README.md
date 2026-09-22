@@ -9,6 +9,9 @@ project in Nagpur.
 
 **[Live demo →](https://plotting-society.aniketcharjan3.workers.dev)**  ·  Go + Postgres + React  ·  runs at **₹0/month**
 
+Sign in as `office@shivrudragroup.in` (builder) or `rohit.deshmukh@example.com`
+(owner), password `sandesh-demo-2026` — or just browse `/explore`, no account needed.
+
 ![Layout map](docs/screenshots/layout-map.png)
 
 ---
@@ -53,7 +56,10 @@ Tailwind · S3-compatible object storage.
 signing is ~100 lines against the stdlib rather than the AWS SDK.
 
 **93.8% test coverage**, store and handler layers against a real Postgres — a
-mock will happily agree a query filters by `builder_id` when it doesn't.
+mock will happily agree a query filters by `builder_id` when it doesn't. They
+caught a route conflict that would have stopped the server booting, and a
+security pass caught a cross-builder data leak —
+[both written up here](docs/ARCHITECTURE.md#what-the-tests-caught).
 
 ---
 

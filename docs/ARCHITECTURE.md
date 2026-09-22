@@ -176,6 +176,65 @@ document URLs are accepted as strings so an upload can be presigned and PUT in
 one round trip, which also accepts `javascript:` — stored XSS the moment someone
 clicks it. The server rejects those on write; `safeUrl` is the second lock.
 
+### What the tests caught
+
+Kept because each one argues for a kind of test rather than for testing in
+general.
+
+**The server would not have started.** `GET /api/societies/by-slug/{slug}` and
+`GET /api/societies/{societyId}/plots` overlap, and Go's `ServeMux` *panics* at
+registration on an ambiguous pattern. Only a test that actually mounted the
+routes could find it — no request-level test would have, because the process
+dies before serving one.
+
+**Renaming a plot onto an existing number returned 500** where the create path
+correctly returned 409. Found by a test that exercised the two paths against the
+same constraint.
+
+**jsonb fields were shipping as base64.** `encoding/json` marshals a plain
+`[]byte` to a base64 string, so `highlights`, `amenities` and `mapShape` all
+arrived as `"W3sibGFiZWwi..."`. The guest page died on `.map`; worse, the layout
+map would have silently drawn **zero plots**, because the page renders its chrome
+either way. A browser test that counts plots catches that; one that checks the
+page is not blank does not.
+
+**Cross-builder read on plot detail.** `GET /api/plots/{plotId}` checked
+`IsStaff()` and returned the owner's name, private site notes, unpaid dues and
+staff-only documents. Every *mutation* went through the tenancy guard; this read
+did not, and the existing test only ever used staff from the same builder, so it
+passed. Tenancy is now tested three ways — the owning builder, a different
+builder, and a super admin — because a check wired to the wrong column still
+passes a single happy-path test.
+
+**Presigned uploads signed only `host`,** which made the content-type allowlist
+decorative: declare `image/jpeg`, PUT HTML, have the store serve it as HTML.
+Content-Type and Content-Length are in the signature now.
+
+---
+
+
+## Frontend
+
+```
+web/src/
+    lib/api.ts          one fetch wrapper; token refresh is transparent
+    lib/auth.tsx        session context
+    lib/useSociety.tsx  which project is being shown — a selection, not a constant
+    components/         shared UI; PlotMap is used by both the owner and guest maps
+    pages/              one file per route
+    pages/admin/        the builder portal
+```
+
+**There is no "the society".** A builder runs several projects, so everything
+reads `useSociety()` and the shell offers a switcher when there is more than
+one. The first version pinned `societies[0]` in a module-level variable; adding
+a second project would have silently shown the wrong one.
+
+**Anything that reaches an `href` goes through `safeUrl()`.** Attachment and
+document URLs are accepted as strings so an upload can be presigned and PUT in
+one round trip, which also accepts `javascript:` — stored XSS the moment someone
+clicks it. The server rejects those on write; `safeUrl` is the second lock.
+
 ---
 
 ## Known limits
